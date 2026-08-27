@@ -1,0 +1,1 @@
+import { expect,it } from 'vitest';import { allocateDuties } from './duties'; it('honours unavailable teachers and distributes duties',()=>{const r=allocateDuties(['a','b'],[{id:'x',name:'X',unavailable:['d']},{id:'y',name:'Y',unavailable:[]}],'d');expect(r).toHaveLength(1);expect(r[0].teacherId).toBe('y')});
