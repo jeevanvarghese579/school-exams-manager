@@ -678,6 +678,121 @@ th {
 .visually-hidden {
   display: none;
 }
+.duty-allotment {
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.teacher-duty-panel {
+  position: sticky;
+  top: 18px;
+  background: #fff;
+  border: 1px solid #e5e9f1;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 2px 8px #17325a08;
+}
+.teacher-duty-panel .row {
+  margin-bottom: 8px;
+}
+.teacher-duty-panel h2 {
+  margin: 0;
+  color: #111827;
+}
+.duty-roster h2 {
+  color: #111827;
+}
+.teacher-add {
+  display: flex;
+  gap: 7px;
+  margin: 14px 0;
+}
+.teacher-add button {
+  padding: 8px 10px;
+}
+.teacher-duty-list {
+  display: grid;
+  gap: 9px;
+}
+.teacher-duty-card {
+  border: 1px solid #dbe3ef;
+  border-radius: 9px;
+  padding: 11px;
+  background: #f9fbfd;
+  cursor: grab;
+}
+.teacher-duty-card:active {
+  cursor: grabbing;
+}
+.teacher-duty-card > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  align-items: center;
+}
+.teacher-duty-card .danger {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+.teacher-duty-card small {
+  display: block;
+  margin-top: 8px;
+  color: #0f766e;
+  font-weight: 700;
+}
+.teacher-duty-card b {
+  color: #172033;
+}
+.duty-roster {
+  min-width: 0;
+}
+.duty-session {
+  border-top: 1px solid #e4eaf2;
+  padding: 14px 0;
+}
+.duty-session h3 {
+  margin: 0 0 10px;
+}
+.duty-room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 9px;
+}
+.duty-room {
+  min-height: 78px;
+  border: 1px solid #c9d9ea;
+  border-radius: 9px;
+  padding: 9px;
+  background: #f8fbff;
+  display: grid;
+  align-content: space-between;
+  gap: 10px;
+}
+.duty-room small {
+  font-weight: 700;
+  color: #52677e;
+}
+.duty-room b {
+  background: #0f766e;
+  color: #fff;
+  padding: 8px;
+  border-radius: 6px;
+  text-align: center;
+}
+.duty-room b[draggable="true"] {
+  cursor: grab;
+}
+.duty-room b[draggable="true"]:active {
+  cursor: grabbing;
+}
+.duty-room .duty-both-sessions {
+  background: #facc15;
+  color: #3f2d00;
+}
+.duty-room:hover {
+  border-color: #0f766e;
+}
 
 @media (max-width: 900px) {
   .room-editor-fields {

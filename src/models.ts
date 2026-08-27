@@ -105,6 +105,7 @@ export interface Project {
   rooms: Room[];
   teachers: Teacher[];
   timetable: TimetableEntry[];
+  dutyAssignments: DutyRosterAssignment[];
   languages: string[];
   rules: SeatingRules;
   archived?: boolean;
@@ -150,6 +151,11 @@ export interface DutyAssignment {
   teacherId: Id;
   locked?: boolean;
 }
+export interface DutyRosterAssignment extends DutyAssignment {
+  date: string;
+  session: string;
+  slot: number;
+}
 export const uid = () => crypto.randomUUID();
 export const emptyProject = (): Project => {
   const now = Date.now();
@@ -171,6 +177,7 @@ export const emptyProject = (): Project => {
     rooms: [],
     teachers: [],
     timetable: [],
+    dutyAssignments: [],
     languages: [],
     rules: {
       avoidSubjectBench: true,

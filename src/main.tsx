@@ -133,7 +133,7 @@ function App() {
     ["classes", "Classes & Subjects", Users],
     ["rooms", "Rooms", MapPin],
     ["timetable", "Exam Timetable", CalendarDays],
-    ["teachers", "Teachers", GraduationCap],
+    ["teachers", "Teachers Duty Allotment", GraduationCap],
     ["seating", "Seating", BookOpen],
     ["reports", "Reports", Printer],
     ["about", "About", Archive],
@@ -263,6 +263,7 @@ function normalizeRestoredProject(backup: Project): Project {
     ...backup,
     students: backup.students ?? [],
     languages: backup.languages ?? [],
+    dutyAssignments: backup.dutyAssignments ?? [],
     classes: backup.classes.map((group) => ({
       ...group,
       active: group.active ?? true,
@@ -1240,8 +1241,12 @@ function DateTimetable({ p, update }: ProjectEditorProps) {
               { date: entry.date, session: entry.session },
             ]),
         ).values(),
-      ].sort((a, b) =>
-        `${a.date}|${a.session}`.localeCompare(`${b.date}|${b.session}`),
+      ].sort(
+        (a, b) =>
+          a.date.localeCompare(b.date) ||
+          Number(/afternoon/i.test(a.session)) -
+            Number(/afternoon/i.test(b.session)) ||
+          a.session.localeCompare(b.session),
       ),
     [p.exam.sessions, p.timetable],
   );
@@ -1671,83 +1676,308 @@ function DateTimetable({ p, update }: ProjectEditorProps) {
 }
 
 function Teachers({ p, update }: ProjectEditorProps) {
-  const add = () =>
-    update("teachers", [
-      ...p.teachers,
-      { id: uid(), name: "New teacher", unavailable: [] },
+  const [teacherName, setTeacherName] = useState("");
+  const dutyAssignments = p.dutyAssignments ?? [];
+  const sessions = useMemo(
+    () =>
+      [
+        ...new Map(
+          p.timetable
+            .filter(
+              (entry) =>
+                entry.type !== "none" &&
+                p.exam.sessions.includes(entry.session),
+            )
+            .map((entry) => [
+              `${entry.date}|${entry.session}`,
+              { date: entry.date, session: entry.session },
+            ]),
+        ).values(),
+      ].sort(
+        (a, b) =>
+          a.date.localeCompare(b.date) ||
+          (/(^|\s)forenoon\b/i.test(a.session)
+            ? 0
+            : /afternoon/i.test(a.session)
+              ? 1
+              : 2) -
+            (/(^|\s)forenoon\b/i.test(b.session)
+              ? 0
+              : /afternoon/i.test(b.session)
+                ? 1
+                : 2) ||
+          a.session.localeCompare(b.session),
+      ),
+    [p.exam.sessions, p.timetable],
+  );
+  const rooms = p.rooms.filter((room) => room.active);
+  const slots = useMemo(
+    () =>
+      sessions.flatMap((item) =>
+        rooms.flatMap((room) =>
+          Array.from({ length: p.rules.invigilatorsPerRoom }, (_, index) => ({
+            ...item,
+            room,
+            slot: index + 1,
+            key: `${item.date}|${item.session}|${room.id}|${index + 1}`,
+          })),
+        ),
+      ),
+    [p.rules.invigilatorsPerRoom, rooms, sessions],
+  );
+  const assignmentFor = (slot: (typeof slots)[number]) =>
+    dutyAssignments.find(
+      (assignment) =>
+        assignment.date === slot.date &&
+        assignment.session === slot.session &&
+        assignment.roomId === slot.room.id &&
+        assignment.slot === slot.slot,
+    );
+  const counts = p.teachers.reduce<Record<string, [number, number]>>(
+    (result, teacher) => {
+      const assignments = dutyAssignments.filter(
+        (item) => item.teacherId === teacher.id,
+      );
+      result[teacher.id] = [
+        assignments.filter((item) => /forenoon/i.test(item.session)).length,
+        assignments.filter((item) => /afternoon/i.test(item.session)).length,
+      ];
+      return result;
+    },
+    {},
+  );
+  const saveAssignments = (assignments: typeof dutyAssignments) =>
+    update("dutyAssignments", assignments);
+  const canAssign = (
+    teacherId: string,
+    target: (typeof slots)[number],
+    ignored: string[] = [],
+  ) =>
+    !dutyAssignments.some((assignment) => {
+      const key = `${assignment.date}|${assignment.session}|${assignment.roomId}|${assignment.slot}`;
+      return (
+        !ignored.includes(key) &&
+        assignment.teacherId === teacherId &&
+        assignment.date === target.date &&
+        assignment.session === target.session
+      );
+    });
+  const assign = (target: (typeof slots)[number], teacherId: string) => {
+    if (!canAssign(teacherId, target, [target.key])) {
+      alert("This teacher already has a duty in this date and session.");
+      return;
+    }
+    saveAssignments([
+      ...dutyAssignments.filter(
+        (item) =>
+          item.date !== target.date ||
+          item.session !== target.session ||
+          item.roomId !== target.room.id ||
+          item.slot !== target.slot,
+      ),
+      {
+        date: target.date,
+        session: target.session,
+        roomId: target.room.id,
+        slot: target.slot,
+        teacherId,
+      },
     ]);
+  };
+  const moveOrSwap = (
+    target: (typeof slots)[number],
+    payload: { teacherId: string; sourceKey?: string },
+  ) => {
+    const source = payload.sourceKey
+      ? slots.find((slot) => slot.key === payload.sourceKey)
+      : undefined;
+    if (source?.key === target.key) return;
+    const targetAssignment = assignmentFor(target);
+    if (!source) return assign(target, payload.teacherId);
+    const sourceAssignment = assignmentFor(source);
+    if (!sourceAssignment) return assign(target, payload.teacherId);
+    const ignored = [source.key, target.key];
+    if (!canAssign(payload.teacherId, target, ignored)) {
+      alert("This teacher already has a duty in this date and session.");
+      return;
+    }
+    if (
+      targetAssignment &&
+      !canAssign(targetAssignment.teacherId, source, ignored)
+    ) {
+      alert("These two duties cannot be interchanged in the same session.");
+      return;
+    }
+    const remaining = dutyAssignments.filter((item) => {
+      const key = `${item.date}|${item.session}|${item.roomId}|${item.slot}`;
+      return !ignored.includes(key);
+    });
+    remaining.push({
+      date: target.date,
+      session: target.session,
+      roomId: target.room.id,
+      slot: target.slot,
+      teacherId: payload.teacherId,
+    });
+    if (targetAssignment)
+      remaining.push({
+        date: source.date,
+        session: source.session,
+        roomId: source.room.id,
+        slot: source.slot,
+        teacherId: targetAssignment.teacherId,
+      });
+    saveAssignments(remaining);
+  };
+  const hasBothSessions = (teacherId: string | undefined, date: string) =>
+    Boolean(teacherId) &&
+    dutyAssignments.some(
+      (item) =>
+        item.teacherId === teacherId &&
+        item.date === date &&
+        /forenoon/i.test(item.session),
+    ) &&
+    dutyAssignments.some(
+      (item) =>
+        item.teacherId === teacherId &&
+        item.date === date &&
+        /afternoon/i.test(item.session),
+    );
+  const autoAllot = () => {
+    const next: typeof dutyAssignments = [];
+    const countsByTeacher = new Map(
+      p.teachers.map((teacher) => [teacher.id, [0, 0]]),
+    );
+    const roomCountsByTeacher = new Map<string, number>();
+    const dates = [...new Set(sessions.map((item) => item.date))];
+    const previousDateFor = new Map(
+      dates.map((date, index) => [date, dates[index - 1]]),
+    );
+    slots.forEach((slot) => {
+      const used = new Set(
+        next
+          .filter(
+            (item) => item.date === slot.date && item.session === slot.session,
+          )
+          .map((item) => item.teacherId),
+      );
+      const sessionIndex = /afternoon/i.test(slot.session) ? 1 : 0;
+      const teacher = p.teachers
+        .filter((item) => !used.has(item.id))
+        .sort((a, b) => {
+          const aCount = countsByTeacher.get(a.id) ?? [0, 0];
+          const bCount = countsByTeacher.get(b.id) ?? [0, 0];
+          const aRoomCount =
+            roomCountsByTeacher.get(`${a.id}|${slot.room.id}`) ?? 0;
+          const bRoomCount =
+            roomCountsByTeacher.get(`${b.id}|${slot.room.id}`) ?? 0;
+          const previousDate = previousDateFor.get(slot.date);
+          const aSameDateRoom = Number(
+            next.some(
+              (item) =>
+                item.teacherId === a.id &&
+                item.date === slot.date &&
+                item.roomId === slot.room.id,
+            ),
+          );
+          const bSameDateRoom = Number(
+            next.some(
+              (item) =>
+                item.teacherId === b.id &&
+                item.date === slot.date &&
+                item.roomId === slot.room.id,
+            ),
+          );
+          const aPreviousDateRoom = Number(
+            previousDate &&
+              next.some(
+                (item) =>
+                  item.teacherId === a.id &&
+                  item.date === previousDate &&
+                  item.roomId === slot.room.id,
+              ),
+          );
+          const bPreviousDateRoom = Number(
+            previousDate &&
+              next.some(
+                (item) =>
+                  item.teacherId === b.id &&
+                  item.date === previousDate &&
+                  item.roomId === slot.room.id,
+              ),
+          );
+          return (
+            aCount[sessionIndex] - bCount[sessionIndex] ||
+            aSameDateRoom - bSameDateRoom ||
+            aPreviousDateRoom - bPreviousDateRoom ||
+            aCount[0] + aCount[1] - (bCount[0] + bCount[1]) ||
+            aRoomCount - bRoomCount ||
+            a.name.localeCompare(b.name)
+          );
+        })[0];
+      if (!teacher) return;
+      const teacherCounts = countsByTeacher.get(teacher.id)!;
+      teacherCounts[sessionIndex] += 1;
+      const roomKey = `${teacher.id}|${slot.room.id}`;
+      roomCountsByTeacher.set(
+        roomKey,
+        (roomCountsByTeacher.get(roomKey) ?? 0) + 1,
+      );
+      next.push({
+        date: slot.date,
+        session: slot.session,
+        roomId: slot.room.id,
+        slot: slot.slot,
+        teacherId: teacher.id,
+      });
+    });
+    saveAssignments(next);
+  };
+  const add = () => {
+    const name = teacherName.trim();
+    if (!name) return;
+    update("teachers", [...p.teachers, { id: uid(), name, unavailable: [] }]);
+    setTeacherName("");
+  };
   return (
-    <section className="panel">
-      <div className="row">
-        <h2>Teacher manager</h2>
-        <Button onClick={add}>
-          <Plus />
-          Add teacher
-        </Button>
-      </div>
-      <div className="table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Department</th>
-              <th>Maximum duties</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {p.teachers.map((teacher) => (
-              <tr key={teacher.id}>
-                <td>
-                  <input
-                    value={teacher.name}
-                    onChange={(event) =>
-                      update(
-                        "teachers",
-                        p.teachers.map((item) =>
-                          item.id === teacher.id
-                            ? { ...item, name: event.target.value }
-                            : item,
-                        ),
-                      )
-                    }
-                  />
-                </td>
-                <td>
-                  <input
-                    value={teacher.department ?? ""}
-                    onChange={(event) =>
-                      update(
-                        "teachers",
-                        p.teachers.map((item) =>
-                          item.id === teacher.id
-                            ? { ...item, department: event.target.value }
-                            : item,
-                        ),
-                      )
-                    }
-                  />
-                </td>
-                <td>
-                  <input
-                    type="number"
-                    value={teacher.maxDuties ?? ""}
-                    onChange={(event) =>
-                      update(
-                        "teachers",
-                        p.teachers.map((item) =>
-                          item.id === teacher.id
-                            ? {
-                                ...item,
-                                maxDuties: +event.target.value || undefined,
-                              }
-                            : item,
-                        ),
-                      )
-                    }
-                  />
-                </td>
-                <td>
+    <section className="duty-allotment">
+      <aside className="teacher-duty-panel">
+        <div className="row">
+          <h2>Teachers</h2>
+          <span className="badge">{p.teachers.length} teachers</span>
+        </div>
+        <p className="muted">
+          Drag a teacher onto a room duty to assign or replace them.
+        </p>
+        <div className="teacher-add">
+          <input
+            value={teacherName}
+            placeholder="Teacher name"
+            onChange={(event) => setTeacherName(event.target.value)}
+            onKeyDown={(event) => event.key === "Enter" && add()}
+          />
+          <Button onClick={add}>
+            <Plus />
+            Add
+          </Button>
+        </div>
+        <div className="teacher-duty-list">
+          {p.teachers.map((teacher) => {
+            const [forenoon, afternoon] = counts[teacher.id] ?? [0, 0];
+            return (
+              <article
+                key={teacher.id}
+                className="teacher-duty-card"
+                draggable
+                onDragStart={(event) =>
+                  event.dataTransfer.setData(
+                    "application/x-school-duty",
+                    JSON.stringify({ teacherId: teacher.id }),
+                  )
+                }
+              >
+                <div>
+                  <b>{teacher.name}</b>
                   <button
                     className="danger"
                     onClick={() =>
@@ -1759,12 +1989,105 @@ function Teachers({ p, update }: ProjectEditorProps) {
                   >
                     Delete
                   </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                </div>
+                <small>
+                  FN {forenoon} · AN {afternoon} · Total {forenoon + afternoon}
+                </small>
+              </article>
+            );
+          })}
+        </div>
+      </aside>
+      <section className="panel duty-roster">
+        <div className="row">
+          <div>
+            <h2>Teachers</h2>
+            <p className="muted">
+              Exam dates, sessions, and rooms come from the current project.
+            </p>
+          </div>
+          <Button onClick={autoAllot}>Auto allot fairly</Button>
+        </div>
+        {!sessions.length || !rooms.length ? (
+          <p className="warning">
+            Add active exam timetable sessions and rooms to create the duty
+            roster.
+          </p>
+        ) : (
+          sessions.map((item) => (
+            <article
+              className="duty-session"
+              key={`${item.date}|${item.session}`}
+            >
+              <h3>
+                {item.date} · {item.session}
+              </h3>
+              <div className="duty-room-grid">
+                {slots
+                  .filter(
+                    (slot) =>
+                      slot.date === item.date && slot.session === item.session,
+                  )
+                  .map((slot) => {
+                    const assignment = assignmentFor(slot);
+                    const teacher = p.teachers.find(
+                      (entry) => entry.id === assignment?.teacherId,
+                    );
+                    return (
+                      <div
+                        className="duty-room"
+                        key={slot.key}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={(event) => {
+                          const raw = event.dataTransfer.getData(
+                            "application/x-school-duty",
+                          );
+                          if (!raw) return;
+                          moveOrSwap(slot, JSON.parse(raw));
+                        }}
+                        onDoubleClick={() =>
+                          assignment &&
+                          saveAssignments(
+                            dutyAssignments.filter(
+                              (entry) => entry !== assignment,
+                            ),
+                          )
+                        }
+                      >
+                        <small>
+                          {slot.room.name}
+                          {p.rules.invigilatorsPerRoom > 1
+                            ? ` · Duty ${slot.slot}`
+                            : ""}
+                        </small>
+                        <b
+                          className={
+                            hasBothSessions(teacher?.id, slot.date)
+                              ? "duty-both-sessions"
+                              : ""
+                          }
+                          draggable={Boolean(teacher)}
+                          onDragStart={(event) =>
+                            teacher &&
+                            event.dataTransfer.setData(
+                              "application/x-school-duty",
+                              JSON.stringify({
+                                teacherId: teacher.id,
+                                sourceKey: slot.key,
+                              }),
+                            )
+                          }
+                        >
+                          {teacher?.name ?? "Drop teacher here"}
+                        </b>
+                      </div>
+                    );
+                  })}
+              </div>
+            </article>
+          ))
+        )}
+      </section>
     </section>
   );
 }
