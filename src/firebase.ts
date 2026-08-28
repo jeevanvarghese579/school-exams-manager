@@ -10,6 +10,7 @@ import {
 } from "firebase/auth";
 import {
   collection,
+  deleteDoc,
   doc,
   getDocs,
   initializeFirestore,
@@ -59,6 +60,11 @@ export const logOut = () => (auth ? signOut(auth) : Promise.resolve());
 export const syncProject = async (uid: string, project: Project) => {
   if (!store) throw new Error("Firebase is unavailable.");
   await setDoc(doc(store, "users", uid, "projects", project.id), project);
+};
+
+export const deleteCloudProject = async (uid: string, projectId: string) => {
+  if (!store) throw new Error("Firebase is unavailable.");
+  await deleteDoc(doc(store, "users", uid, "projects", projectId));
 };
 
 export const loadCloudProjects = async (uid: string): Promise<Project[]> => {

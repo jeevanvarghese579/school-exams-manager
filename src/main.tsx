@@ -17,11 +17,13 @@ import {
   Plus,
   Printer,
   Settings,
+  Trash2,
   Upload,
   Users,
 } from "lucide-react";
 import { db, saveProject } from "./db";
 import {
+  deleteCloudProject,
   firebaseReady,
   googleSignIn,
   loadCloudProjects,
@@ -214,6 +216,47 @@ function App() {
     await saveProject(next);
     setStatus(firebaseUser ? "Local saved · Cloud pending" : "Local Only · Saved");
   };
+  const openProject = (next: Project) => {
+    currentProjectRef.current = next;
+    setProject(next);
+    setPlan(null);
+    setDuties([]);
+    setView("dashboard");
+  };
+  const deleteProject = async (target: Project) => {
+    const confirmed = window.confirm(
+      `Delete the exam profile “${target.name}”?\n\nThis permanently removes its saved data${firebaseUser ? " from this device and Firebase" : " from this device"}.`,
+    );
+    if (!confirmed) return;
+
+    try {
+      setStatus("Deleting project…");
+      if (firebaseUser) await deleteCloudProject(firebaseUser.uid, target.id);
+      await db.projects.delete(target.id);
+
+      const remaining = projects.filter((item) => item.id !== target.id);
+      setProjects(remaining);
+      if (project?.id === target.id) {
+        const next = [...remaining]
+          .filter((item) => !item.archived)
+          .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+        currentProjectRef.current = next ?? null;
+        setProject(next ?? null);
+        setPlan(null);
+        setDuties([]);
+        setView("dashboard");
+        if (!next) localStorage.setItem(START_SCREEN_KEY, "true");
+      }
+      setStatus(firebaseUser ? "Firebase · Project deleted" : "Local Only · Project deleted");
+    } catch (error) {
+      setStatus(firebaseUser ? "Firebase · Delete failed" : "Local Only");
+      alert(
+        error instanceof Error
+          ? `Could not delete this project: ${error.message}`
+          : "Could not delete this project.",
+      );
+    }
+  };
   const connectFirebase = async () => {
     try {
       await googleSignIn();
@@ -398,12 +441,12 @@ function App() {
         </div>
         <select
           value={project.id}
-          onChange={(event) =>
-            setProject(
-              projects.find((item) => item.id === event.target.value) ??
-                project,
-            )
-          }
+          onChange={(event) => {
+            const selected = projects.find(
+              (item) => item.id === event.target.value,
+            );
+            if (selected) openProject(selected);
+          }}
         >
           {projects.map((item) => (
             <option key={item.id} value={item.id}>
@@ -495,7 +538,14 @@ function App() {
           onChange={restore}
         />
         {view === "dashboard" && (
-          <Dashboard p={project} setView={setView} plan={plan} />
+          <Dashboard
+            p={project}
+            projects={projects}
+            setView={setView}
+            plan={plan}
+            onOpenProject={openProject}
+            onDeleteProject={(target) => void deleteProject(target)}
+          />
         )}
         {view === "setup" && <Setup p={project} save={persist} />}
         {view === "classes" && <Classes p={project} update={update} />}
@@ -658,12 +708,18 @@ function Welcome({
 }
 const Dashboard = ({
   p,
+  projects,
   setView,
   plan,
+  onOpenProject,
+  onDeleteProject,
 }: {
   p: Project;
+  projects: Project[];
   setView: (view: View) => void;
   plan: SeatingPlan | null;
+  onOpenProject: (project: Project) => void;
+  onDeleteProject: (project: Project) => void;
 }) => (
   <>
     <section className="grid stats">
@@ -690,6 +746,60 @@ const Dashboard = ({
           <strong>{value}</strong>
         </article>
       ))}
+    </section>
+    <section className="panel exam-profiles-panel">
+      <div className="panel-heading-row">
+        <div>
+          <h2>Exam profiles</h2>
+          <p className="muted">Open or remove examinations saved in this profile.</p>
+        </div>
+        <span className="profile-count">
+          {projects.length} {projects.length === 1 ? "profile" : "profiles"}
+        </span>
+      </div>
+      <div className="exam-profile-grid">
+        {[...projects]
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+          .map((item) => {
+            const active = item.id === p.id;
+            return (
+              <article
+                className={`exam-profile-card${active ? " active" : ""}`}
+                key={item.id}
+              >
+                <div>
+                  <div className="exam-profile-title">
+                    <h3>{item.name}</h3>
+                    {active && <span>Current</span>}
+                  </div>
+                  <p>{item.school.name || "School not configured"}</p>
+                  <small>
+                    {item.exam.startDate && item.exam.endDate
+                      ? `${formatDate(item.exam.startDate)} → ${formatDate(item.exam.endDate)}`
+                      : "Exam dates not configured"}
+                  </small>
+                </div>
+                <div className="actions exam-profile-actions">
+                  <Button
+                    className="secondary"
+                    disabled={active}
+                    onClick={() => onOpenProject(item)}
+                  >
+                    {active ? "Opened" : "Open"}
+                  </Button>
+                  <Button
+                    className="danger"
+                    onClick={() => onDeleteProject(item)}
+                    aria-label={`Delete ${item.name}`}
+                  >
+                    <Trash2 size={15} />
+                    Delete
+                  </Button>
+                </div>
+              </article>
+            );
+          })}
+      </div>
     </section>
     <section className="panel">
       <h2>Setup checklist</h2>

@@ -45,3 +45,8 @@ Additional tables automatically continue onto new PDF pages when needed.
 Page-count preview reflects the packed layout.
 School and examination names are centered and styled as headings in:Exam Absentees Register
 Teacher Duty List
+
+
+
+
+npm run build && firebase deploy && git add . && git commit -m "profile deletion" && git push
