@@ -94,6 +94,7 @@ export interface SeatingRules {
   avoidSubjectFrontBack: boolean;
   avoidClassBench: boolean;
   invigilatorsPerRoom: number;
+  dutyMode?: "standard" | "half" | "absolute-equal";
 }
 export interface Project {
   id: Id;
@@ -155,6 +156,7 @@ export interface DutyRosterAssignment extends DutyAssignment {
   date: string;
   session: string;
   slot: number;
+  share?: number;
 }
 export const uid = () => crypto.randomUUID();
 export const emptyProject = (): Project => {
@@ -185,6 +187,7 @@ export const emptyProject = (): Project => {
       avoidSubjectFrontBack: true,
       avoidClassBench: true,
       invigilatorsPerRoom: 1,
+      dutyMode: "standard",
     },
     updatedAt: now,
     createdAt: now,

@@ -726,6 +726,45 @@ th {
 .duty-roster h2 {
   color: #111827;
 }
+.duty-roster-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+.duty-mode-toggle {
+  display: inline-flex !important;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid #c9d9ea;
+  border-radius: 8px;
+  background: #f8fbff;
+  cursor: pointer;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.duty-mode-toggle input {
+  width: auto;
+  margin: 0;
+  accent-color: #0f766e;
+}
+.duty-mode-toggle:has(input:checked) {
+  border-color: #0f766e;
+  background: #e7f7f4;
+  color: #0b625c;
+}
+.duty-mode-note {
+  margin: 10px 0 4px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #eef8f6;
+  color: #0b625c;
+  font-size: 13px;
+  font-weight: 600;
+}
 .teacher-add {
   display: flex;
   gap: 7px;
@@ -795,6 +834,20 @@ th {
 .duty-room small {
   font-weight: 700;
   color: #52677e;
+}
+.duty-room-teachers {
+  display: grid;
+  gap: 7px;
+}
+.duty-slot {
+  display: grid;
+  gap: 4px;
+}
+.duty-slot > span {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 .duty-room b {
   background: #0f766e;
@@ -1110,6 +1163,13 @@ th {
   .duty-matrix td:first-child,
   .duty-matrix td:nth-child(2) {
     text-align: left;
+  }
+  .duty-teacher-line {
+    display: block;
+    line-height: 1.25;
+  }
+  .duty-teacher-line + .duty-teacher-line {
+    margin-top: 2px;
   }
   .absence-slip-grid {
     display: grid;

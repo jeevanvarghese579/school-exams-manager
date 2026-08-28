@@ -49,7 +49,11 @@ import {
   TEACHER_TABLE_LABEL,
   validateSeating,
 } from "./algorithms/seating";
-import { allocateDuties } from "./algorithms/duties";
+import {
+  allocateDuties,
+  allocateFlexibleDuties,
+  createDutySegments,
+} from "./algorithms/duties";
 import {
   languageForRoll,
   validateLanguageRanges,
@@ -425,7 +429,9 @@ function App() {
         {view === "classes" && <Classes p={project} update={update} />}
         {view === "rooms" && <Rooms p={project} update={update} />}
         {view === "timetable" && <Timetable p={project} update={update} />}
-        {view === "teachers" && <Teachers p={project} update={update} />}
+        {view === "teachers" && (
+          <Teachers p={project} update={update} save={persist} />
+        )}
         {view === "seating" && (
           <Seating
             p={project}
@@ -470,6 +476,7 @@ function normalizeRestoredProject(backup: Project): Project {
     students: backup.students ?? [],
     languages: backup.languages ?? [],
     dutyAssignments: backup.dutyAssignments ?? [],
+    rules: { ...defaults.rules, ...backup.rules },
     classes: backup.classes.map((group) => ({
       ...group,
       active: group.active ?? true,
@@ -1936,7 +1943,11 @@ function DateTimetable({ p, update }: ProjectEditorProps) {
   );
 }
 
-function Teachers({ p, update }: ProjectEditorProps) {
+function Teachers({
+  p,
+  update,
+  save,
+}: ProjectEditorProps & { save: (project: Project) => void }) {
   const [teacherName, setTeacherName] = useState("");
   const dutyAssignments = p.dutyAssignments ?? [];
   const sessions = useMemo(
@@ -1972,19 +1983,41 @@ function Teachers({ p, update }: ProjectEditorProps) {
     [p.exam.sessions, p.timetable],
   );
   const rooms = p.rooms.filter((room) => room.active);
-  const slots = useMemo(
+  const dutyMode = p.rules.dutyMode ?? "standard";
+  const halls = useMemo(
     () =>
       sessions.flatMap((item) =>
-        rooms.flatMap((room) =>
-          Array.from({ length: p.rules.invigilatorsPerRoom }, (_, index) => ({
-            ...item,
-            room,
-            slot: index + 1,
-            key: `${item.date}|${item.session}|${room.id}|${index + 1}`,
-          })),
-        ),
+        rooms.map((room) => ({ ...item, room, roomId: room.id })),
       ),
-    [p.rules.invigilatorsPerRoom, rooms, sessions],
+    [rooms, sessions],
+  );
+  const slots = useMemo(
+    () => {
+      if (dutyMode === "standard")
+        return halls.flatMap((hall) =>
+          Array.from(
+            { length: p.rules.invigilatorsPerRoom },
+            (_, index) => ({
+              ...hall,
+              slot: index + 1,
+              share: 1,
+              key: `${hall.date}|${hall.session}|${hall.room.id}|${index + 1}`,
+            }),
+          ),
+        );
+      return createDutySegments(halls.length, p.teachers.length, dutyMode).map(
+        (segment) => {
+          const hall = halls[segment.hallIndex];
+          return {
+            ...hall,
+            slot: segment.slot,
+            share: segment.share,
+            key: `${hall.date}|${hall.session}|${hall.room.id}|${segment.slot}`,
+          };
+        },
+      );
+    },
+    [dutyMode, halls, p.rules.invigilatorsPerRoom, p.teachers.length],
   );
   const assignmentFor = (slot: (typeof slots)[number]) =>
     dutyAssignments.find(
@@ -2000,8 +2033,12 @@ function Teachers({ p, update }: ProjectEditorProps) {
         (item) => item.teacherId === teacher.id,
       );
       result[teacher.id] = [
-        assignments.filter((item) => /forenoon/i.test(item.session)).length,
-        assignments.filter((item) => /afternoon/i.test(item.session)).length,
+        assignments
+          .filter((item) => /forenoon/i.test(item.session))
+          .reduce((total, item) => total + (item.share ?? 1), 0),
+        assignments
+          .filter((item) => /afternoon/i.test(item.session))
+          .reduce((total, item) => total + (item.share ?? 1), 0),
       ];
       return result;
     },
@@ -2020,7 +2057,9 @@ function Teachers({ p, update }: ProjectEditorProps) {
         !ignored.includes(key) &&
         assignment.teacherId === teacherId &&
         assignment.date === target.date &&
-        assignment.session === target.session
+        assignment.session === target.session &&
+        (dutyMode === "standard" ||
+          assignment.roomId === target.room.id)
       );
     });
   const assign = (target: (typeof slots)[number], teacherId: string) => {
@@ -2041,6 +2080,7 @@ function Teachers({ p, update }: ProjectEditorProps) {
         session: target.session,
         roomId: target.room.id,
         slot: target.slot,
+        share: target.share,
         teacherId,
       },
     ]);
@@ -2078,6 +2118,7 @@ function Teachers({ p, update }: ProjectEditorProps) {
       session: target.session,
       roomId: target.room.id,
       slot: target.slot,
+      share: target.share,
       teacherId: payload.teacherId,
     });
     if (targetAssignment)
@@ -2086,6 +2127,7 @@ function Teachers({ p, update }: ProjectEditorProps) {
         session: source.session,
         roomId: source.room.id,
         slot: source.slot,
+        share: source.share,
         teacherId: targetAssignment.teacherId,
       });
     saveAssignments(remaining);
@@ -2104,7 +2146,38 @@ function Teachers({ p, update }: ProjectEditorProps) {
         item.date === date &&
         /afternoon/i.test(item.session),
     );
+  const setDutyMode = (mode: "half" | "absolute-equal", enabled: boolean) => {
+    const nextMode = enabled ? mode : "standard";
+    const teacherIds = [...p.teachers]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((teacher) => teacher.id);
+    const nextAssignments =
+      nextMode === "standard"
+        ? []
+        : allocateFlexibleDuties(halls, teacherIds, nextMode);
+    save({
+      ...p,
+      rules: {
+        ...p.rules,
+        dutyMode: nextMode,
+      },
+      dutyAssignments: nextAssignments,
+    });
+  };
+  const formatDutyCount = (value: number) =>
+    Number.isInteger(value)
+      ? String(value)
+      : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
   const autoAllot = () => {
+    if (dutyMode !== "standard") {
+      const teacherIds = [...p.teachers]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((teacher) => teacher.id);
+      saveAssignments(
+        allocateFlexibleDuties(halls, teacherIds, dutyMode),
+      );
+      return;
+    }
     const next: typeof dutyAssignments = [];
     const countsByTeacher = new Map(
       p.teachers.map((teacher) => [teacher.id, [0, 0]]),
@@ -2118,7 +2191,9 @@ function Teachers({ p, update }: ProjectEditorProps) {
       const used = new Set(
         next
           .filter(
-            (item) => item.date === slot.date && item.session === slot.session,
+            (item) =>
+              item.date === slot.date &&
+              item.session === slot.session,
           )
           .map((item) => item.teacherId),
       );
@@ -2252,7 +2327,9 @@ function Teachers({ p, update }: ProjectEditorProps) {
                   </button>
                 </div>
                 <small>
-                  FN {forenoon} · AN {afternoon} · Total {forenoon + afternoon}
+                  FN {formatDutyCount(forenoon)} · AN{" "}
+                  {formatDutyCount(afternoon)} · Total{" "}
+                  {formatDutyCount(forenoon + afternoon)}
                 </small>
               </article>
             );
@@ -2267,8 +2344,42 @@ function Teachers({ p, update }: ProjectEditorProps) {
               Exam dates, sessions, and rooms come from the current project.
             </p>
           </div>
-          <Button onClick={autoAllot}>Auto allot fairly</Button>
+          <div className="duty-roster-actions">
+            <label className="duty-mode-toggle">
+              <input
+                type="checkbox"
+                checked={dutyMode === "half"}
+                onChange={(event) =>
+                  setDutyMode("half", event.target.checked)
+                }
+              />
+              <span>Half duties</span>
+            </label>
+            <label className="duty-mode-toggle">
+              <input
+                type="checkbox"
+                checked={dutyMode === "absolute-equal"}
+                onChange={(event) =>
+                  setDutyMode("absolute-equal", event.target.checked)
+                }
+              />
+              <span>Absolute equal duties</span>
+            </label>
+            <Button onClick={autoAllot}>Auto allot fairly</Button>
+          </div>
         </div>
+        {dutyMode === "half" && (
+          <p className="duty-mode-note">
+            Whole duties are allotted first. Only the remaining halls are
+            divided into half duties when equal whole duties are not possible.
+          </p>
+        )}
+        {dutyMode === "absolute-equal" && (
+          <p className="duty-mode-note">
+            Whole duties are allotted first. Only the remaining hall time is
+            divided as needed so every teacher receives exactly the same total.
+          </p>
+        )}
         {!sessions.length || !rooms.length ? (
           <p className="warning">
             Add active exam timetable sessions and rooms to create the duty
@@ -2284,66 +2395,82 @@ function Teachers({ p, update }: ProjectEditorProps) {
                 {item.date} · {item.session}
               </h3>
               <div className="duty-room-grid">
-                {slots
-                  .filter(
+                {rooms.map((room) => {
+                  const roomSlots = slots.filter(
                     (slot) =>
-                      slot.date === item.date && slot.session === item.session,
-                  )
-                  .map((slot) => {
-                    const assignment = assignmentFor(slot);
-                    const teacher = p.teachers.find(
-                      (entry) => entry.id === assignment?.teacherId,
-                    );
-                    return (
-                      <div
-                        className="duty-room"
-                        key={slot.key}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={(event) => {
-                          const raw = event.dataTransfer.getData(
-                            "application/x-school-duty",
+                      slot.date === item.date &&
+                      slot.session === item.session &&
+                      slot.room.id === room.id,
+                  );
+                  return (
+                    <div
+                      className="duty-room"
+                      key={`${item.date}|${item.session}|${room.id}`}
+                    >
+                      <small>{room.name}</small>
+                      <div className="duty-room-teachers">
+                        {roomSlots.map((slot) => {
+                          const assignment = assignmentFor(slot);
+                          const teacher = p.teachers.find(
+                            (entry) => entry.id === assignment?.teacherId,
                           );
-                          if (!raw) return;
-                          moveOrSwap(slot, JSON.parse(raw));
-                        }}
-                        onDoubleClick={() =>
-                          assignment &&
-                          saveAssignments(
-                            dutyAssignments.filter(
-                              (entry) => entry !== assignment,
-                            ),
-                          )
-                        }
-                      >
-                        <small>
-                          {slot.room.name}
-                          {p.rules.invigilatorsPerRoom > 1
-                            ? ` · Duty ${slot.slot}`
-                            : ""}
-                        </small>
-                        <b
-                          className={
-                            hasBothSessions(teacher?.id, slot.date)
-                              ? "duty-both-sessions"
-                              : ""
-                          }
-                          draggable={Boolean(teacher)}
-                          onDragStart={(event) =>
-                            teacher &&
-                            event.dataTransfer.setData(
-                              "application/x-school-duty",
-                              JSON.stringify({
-                                teacherId: teacher.id,
-                                sourceKey: slot.key,
-                              }),
-                            )
-                          }
-                        >
-                          {teacher?.name ?? "Drop teacher here"}
-                        </b>
+                          return (
+                            <div
+                              className="duty-slot"
+                              key={slot.key}
+                              onDragOver={(event) => event.preventDefault()}
+                              onDrop={(event) => {
+                                const raw = event.dataTransfer.getData(
+                                  "application/x-school-duty",
+                                );
+                                if (!raw) return;
+                                moveOrSwap(slot, JSON.parse(raw));
+                              }}
+                              onDoubleClick={() =>
+                                assignment &&
+                                saveAssignments(
+                                  dutyAssignments.filter(
+                                    (entry) => entry !== assignment,
+                                  ),
+                                )
+                              }
+                            >
+                              {dutyMode !== "standard" && (
+                                <span>
+                                  {slot.share === 1
+                                    ? "Full duty"
+                                    : slot.share === 0.5
+                                      ? "Half duty"
+                                      : `${formatDutyCount(slot.share * 100)}% duty`}
+                                </span>
+                              )}
+                              <b
+                                className={
+                                  hasBothSessions(teacher?.id, slot.date)
+                                    ? "duty-both-sessions"
+                                    : ""
+                                }
+                                draggable={Boolean(teacher)}
+                                onDragStart={(event) =>
+                                  teacher &&
+                                  event.dataTransfer.setData(
+                                    "application/x-school-duty",
+                                    JSON.stringify({
+                                      teacherId: teacher.id,
+                                      sourceKey: slot.key,
+                                    }),
+                                  )
+                                }
+                              >
+                                {teacher?.name ?? "Drop teacher here"}
+                              </b>
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    </div>
+                  );
+                })}
               </div>
             </article>
           ))
@@ -3486,24 +3613,34 @@ function DutyReport({ p, plan, rooms, settings }: PrintDocumentProps) {
               <tr key={`${item.date}-${item.session}`}>
                 <td>{firstDateRow ? item.date : ""}</td>
                 <td>{item.session}</td>
-                {rooms.map((room) => (
-                  <td key={room.id}>
-                    {rosterAssignments
+                {rooms.map((room) => {
+                  const hallAssignments = rosterAssignments
                       .filter(
                         (assignment) =>
                           assignment.date === item.date &&
                           assignment.session === item.session &&
                           assignment.roomId === room.id,
                       )
-                      .map(
-                        (assignment) =>
+                      .sort((a, b) => a.slot - b.slot);
+                  return (
+                    <td key={room.id}>
+                      {hallAssignments.length
+                        ? hallAssignments.map((assignment) => (
+                            <div
+                              className="duty-teacher-line"
+                              key={`${assignment.slot}-${assignment.teacherId}`}
+                            >
+                              {
                           p.teachers.find(
                             (teacher) => teacher.id === assignment.teacherId,
-                          )?.name ?? "—",
-                      )
-                      .join(" / ") || "—"}
-                  </td>
-                ))}
+                          )?.name ?? "—"
+                              }
+                            </div>
+                          ))
+                        : "—"}
+                    </td>
+                  );
+                })}
               </tr>
             );
           })}
