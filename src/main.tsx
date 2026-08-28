@@ -236,6 +236,41 @@ function App() {
       );
     }
   };
+  const generateFromReports = (preserveLocks: boolean) => {
+    if (!project) return;
+    const firstEntry = [...project.timetable]
+      .filter(
+        (entry) =>
+          entry.type !== "none" &&
+          project.exam.sessions.includes(entry.session),
+      )
+      .sort(
+        (a, b) =>
+          a.date.localeCompare(b.date) || a.session.localeCompare(b.session),
+      )[0];
+    const target = plan
+      ? { date: plan.date, session: plan.session }
+      : firstEntry && { date: firstEntry.date, session: firstEntry.session };
+    if (!target) {
+      alert("Add an exam timetable session before generating seating.");
+      return;
+    }
+    try {
+      const generated = buildSeatingForSession(
+        project,
+        target.date,
+        target.session,
+        plan,
+        preserveLocks,
+      );
+      setPlan(generated.plan);
+      setDuties(generated.duties);
+    } catch (error) {
+      alert(
+        error instanceof Error ? error.message : "Unable to generate seating",
+      );
+    }
+  };
   const create = async () => {
     localStorage.removeItem(START_SCREEN_KEY);
     const next = emptyProject();
@@ -442,7 +477,13 @@ function App() {
           />
         )}
         {view === "reports" && (
-          <Reports p={project} plan={plan} duties={duties} />
+          <Reports
+            p={project}
+            plan={plan}
+            duties={duties}
+            onGenerateSeating={() => generateFromReports(false)}
+            onRegenerateUnlocked={() => generateFromReports(true)}
+          />
         )}
         {view === "about" && (
           <About
@@ -2542,6 +2583,45 @@ type SeatingProps = {
   duties: ReturnType<typeof allocateDuties>;
   setDuties: (duties: ReturnType<typeof allocateDuties>) => void;
 };
+
+function buildSeatingForSession(
+  p: Project,
+  date: string,
+  session: string,
+  currentPlan: SeatingPlan | null,
+  preserveLocks: boolean,
+) {
+  const sameSession =
+    currentPlan?.date === date && currentPlan.session === session;
+  const locked =
+    preserveLocks && sameSession
+      ? currentPlan.assignments.filter((item) => item.locked)
+      : [];
+  const protectedSeats =
+    preserveLocks && sameSession ? (currentPlan.lockedSeatIds ?? []) : [];
+  const nextPlan = generateSeating(
+    candidatesFor(p, date, session),
+    p.rooms,
+    p.rules,
+    (currentPlan?.seed ?? 41) + 1,
+    locked,
+    protectedSeats,
+  );
+  nextPlan.date = date;
+  nextPlan.session = session;
+  nextPlan.lockedBenchIds =
+    preserveLocks && sameSession ? (currentPlan.lockedBenchIds ?? []) : [];
+  return {
+    plan: nextPlan,
+    duties: allocateDuties(
+      p.rooms.filter((room) => room.active).map((room) => room.id),
+      p.teachers,
+      `${date}|${session}`,
+      p.rules.invigilatorsPerRoom,
+    ),
+  };
+}
+
 function Seating({ p, plan, setPlan, duties, setDuties }: SeatingProps) {
   const sessions = useMemo(
     () => [
@@ -2579,34 +2659,15 @@ function Seating({ p, plan, setPlan, duties, setDuties }: SeatingProps) {
   const run = () => {
     if (!selected) return;
     try {
-      const locked =
-        plan?.date === selected.date && plan.session === selected.session
-          ? plan.assignments.filter((item) => item.locked)
-          : [];
-      const protectedSeats =
-        plan?.date === selected.date && plan.session === selected.session
-          ? (plan.lockedSeatIds ?? [])
-          : [];
-      const next = generateSeating(
-        candidates,
-        p.rooms,
-        p.rules,
-        (plan?.seed ?? 41) + 1,
-        locked,
-        protectedSeats,
+      const generated = buildSeatingForSession(
+        p,
+        selected.date,
+        selected.session,
+        plan,
+        Boolean(plan),
       );
-      next.date = selected.date;
-      next.session = selected.session;
-      next.lockedBenchIds = plan?.lockedBenchIds ?? [];
-      setPlan(next);
-      setDuties(
-        allocateDuties(
-          p.rooms.filter((room) => room.active).map((room) => room.id),
-          p.teachers,
-          selectedKey,
-          p.rules.invigilatorsPerRoom,
-        ),
-      );
+      setPlan(generated.plan);
+      setDuties(generated.duties);
     } catch (error) {
       alert(
         error instanceof Error ? error.message : "Unable to generate seating",
@@ -3029,10 +3090,12 @@ function LegacyReports({
   p,
   plan,
   duties,
+  onGenerateSeating,
 }: {
   p: Project;
   plan: SeatingPlan | null;
   duties: ReturnType<typeof allocateDuties>;
+  onGenerateSeating: () => void;
 }) {
   const candidates = plan ? candidatesFor(p, plan.date, plan.session) : [];
   return (
@@ -3045,10 +3108,18 @@ function LegacyReports({
               Every room prints as a physical room diagram with its own A4 page.
             </p>
           </div>
-          <Button disabled={!plan} onClick={() => window.print()}>
-            <Printer />
-            Print / Save as PDF
-          </Button>
+          <div className="actions">
+            {!plan && (
+              <Button onClick={onGenerateSeating}>
+                <BookOpen />
+                Generate seating
+              </Button>
+            )}
+            <Button disabled={!plan} onClick={() => window.print()}>
+              <Printer />
+              Print / Save as PDF
+            </Button>
+          </div>
         </div>
         {!plan ? (
           <p className="warning">
@@ -3115,6 +3186,8 @@ function Reports(props: {
   p: Project;
   plan: SeatingPlan | null;
   duties: ReturnType<typeof allocateDuties>;
+  onGenerateSeating: () => void;
+  onRegenerateUnlocked: () => void;
 }) {
   if (!props.plan) return <LegacyReports {...props} />;
   return <AdvancedReports {...props} plan={props.plan} />;
@@ -3132,10 +3205,14 @@ function AdvancedReports({
   p,
   plan,
   duties,
+  onGenerateSeating,
+  onRegenerateUnlocked,
 }: {
   p: Project;
   plan: SeatingPlan;
   duties: ReturnType<typeof allocateDuties>;
+  onGenerateSeating: () => void;
+  onRegenerateUnlocked: () => void;
 }) {
   const candidates = candidatesFor(p, plan.date, plan.session);
   const activeRooms = p.rooms.filter((room) => room.active);
@@ -3169,11 +3246,19 @@ function AdvancedReports({
   const selectedDuties = duties.filter((duty) =>
     selectedRoomIds.includes(duty.roomId),
   );
+  const attendanceDateCount = new Set(
+    p.timetable
+      .filter((entry) => entry.type !== "none")
+      .map((entry) => entry.date)
+      .filter(Boolean),
+  ).size;
   const estimate = estimatePaper(
     settings,
     rooms,
     assignmentCount,
     selectedDuties.length,
+    Math.max(1, attendanceDateCount),
+    Math.max(1, p.exam.sessions.length),
   );
   const setOption = <K extends keyof PrintSettings>(
     key: K,
@@ -3196,10 +3281,20 @@ function AdvancedReports({
               plan.
             </p>
           </div>
-          <Button disabled={!rooms.length} onClick={() => window.print()}>
-            <Printer />
-            Generate PDF
-          </Button>
+          <div className="actions report-generation-actions">
+            <Button onClick={onGenerateSeating}>
+              <BookOpen />
+              Generate seating
+            </Button>
+            <Button className="secondary" onClick={onRegenerateUnlocked}>
+              <LockOpen />
+              Regenerate unlocked seats
+            </Button>
+            <Button disabled={!rooms.length} onClick={() => window.print()}>
+              <Printer />
+              Generate PDF
+            </Button>
+          </div>
         </div>
         <div className="print-config-grid">
           <label>
@@ -3423,6 +3518,8 @@ function CompactPrintHeader({
 }
 function PrintPage({
   children,
+  settings,
+  orientation,
   className = "",
 }: {
   children: React.ReactNode;
@@ -3430,7 +3527,9 @@ function PrintPage({
   orientation?: "portrait" | "landscape";
   className?: string;
 }) {
-  const actual = "portrait";
+  const actual =
+    orientation ??
+    (settings.orientation === "landscape" ? "landscape" : "portrait");
   return (
     <article className={`print-page page-${actual} ${className}`}>
       {children}
@@ -3841,62 +3940,150 @@ function AttendanceReport({
         settings={settings}
       />
     );
-  const perPage = settings.density === "comfortable" ? 2 : 4;
-  const pages = Array.from(
-    { length: Math.ceil(rooms.length / perPage) },
-    (_, index) => rooms.slice(index * perPage, (index + 1) * perPage),
+  const dates = [
+    ...new Set(
+      p.timetable
+        .filter((entry) => entry.type !== "none")
+        .map((entry) => entry.date)
+        .filter(Boolean),
+    ),
+  ].sort();
+  if (!dates.length && plan.date) dates.push(plan.date);
+  const sessions = (p.exam.sessions.length
+    ? [...p.exam.sessions]
+    : [plan.session]
+  ).sort(
+    (a, b) =>
+      (/(^|\s)forenoon\b/i.test(a)
+        ? 0
+        : /afternoon/i.test(a)
+          ? 1
+          : 2) -
+        (/(^|\s)forenoon\b/i.test(b)
+          ? 0
+          : /afternoon/i.test(b)
+            ? 1
+            : 2) || a.localeCompare(b),
   );
+  const roomsPerPage =
+    settings.density === "comfortable"
+      ? 4
+      : settings.density === "compact"
+        ? 5
+        : 6;
+  const rowsPerPage =
+    settings.density === "comfortable"
+      ? 6
+      : settings.density === "compact"
+        ? 10
+        : 12;
+  const datesPerPage = Math.max(
+    1,
+    Math.floor(rowsPerPage / Math.max(1, sessions.length)),
+  );
+  const roomPages = Array.from(
+    { length: Math.ceil(rooms.length / roomsPerPage) },
+    (_, index) =>
+      rooms.slice(index * roomsPerPage, (index + 1) * roomsPerPage),
+  );
+  const datePages = Array.from(
+    { length: Math.ceil(dates.length / datesPerPage) },
+    (_, index) =>
+      dates.slice(index * datesPerPage, (index + 1) * datesPerPage),
+  );
+  const classesForSession = (date: string, session: string) => [
+    ...new Set(
+      p.timetable
+        .filter(
+          (entry) =>
+            entry.date === date &&
+            entry.session === session &&
+            entry.type !== "none",
+        )
+        .map((entry) => {
+          const group = p.classes.find((item) => item.id === entry.classId);
+          return group
+            ? `${group.name}${group.section ? ` ${group.section}` : ""}`
+            : "";
+        })
+        .filter(Boolean),
+    ),
+  ];
   return (
     <>
-      {pages.map((pageRooms, index) => (
-        <PrintPage
-          key={index}
-          settings={settings}
-          className="attendance-slip-page"
-        >
-          <CompactPrintHeader p={p} plan={plan} title="Exam Absence Register" />
-          <div className="absence-slip-grid">
-            {pageRooms.map((room) => {
-              const teacherId = duties.find(
-                (duty) => duty.roomId === room.id,
-              )?.teacherId;
-              return (
-                <section className="absence-slip" key={room.id}>
-                  <div>
-                    <b>Date</b>
-                    <span>{plan.date}</span>
-                  </div>
-                  <div>
-                    <b>Session</b>
-                    <span>{plan.session}</span>
-                  </div>
-                  <div>
-                    <b>Room</b>
-                    <span>{room.name}</span>
-                  </div>
-                  <div>
-                    <b>Teacher</b>
-                    <span>
-                      {p.teachers.find((teacher) => teacher.id === teacherId)
-                        ?.name ?? "________________"}
-                    </span>
-                  </div>
-                  <p>
-                    <b>Absent roll numbers:</b>
-                  </p>
-                  <div className="absence-lines">
-                    <span />
-                    <span />
-                    <span />
-                    <span />
-                  </div>
-                  <div className="signature-line">Teacher signature</div>
-                </section>
-              );
-            })}
-          </div>
-        </PrintPage>
-      ))}
+      {roomPages.flatMap((pageRooms, roomPageIndex) =>
+        datePages.map((pageDates, datePageIndex) => (
+          <PrintPage
+            key={`${roomPageIndex}-${datePageIndex}`}
+            settings={settings}
+            orientation="landscape"
+            className="attendance-register-page"
+          >
+            <div className="compact-print-header">
+              <b>Exam Absentees Register</b>
+              <span>
+                {p.school.name} · {p.exam.name}
+              </span>
+            </div>
+            <table className="print-table attendance-register">
+              <thead>
+                <tr>
+                  <th rowSpan={2}>Date</th>
+                  <th rowSpan={2}>Session</th>
+                  <th colSpan={pageRooms.length}>Absentees</th>
+                </tr>
+                <tr>
+                  {pageRooms.map((room) => (
+                    <th key={room.id}>{room.name}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pageDates.flatMap((date) =>
+                  sessions.map((session, sessionIndex) => (
+                    <tr key={`${date}-${session}`}>
+                      {sessionIndex === 0 && (
+                        <td rowSpan={sessions.length} className="register-date">
+                          {date}
+                        </td>
+                      )}
+                      <td className="register-session">{session}</td>
+                      {pageRooms.map((room) => {
+                        const classNames = classesForSession(date, session);
+                        return (
+                          <td className="absence-register-cell" key={room.id}>
+                            <div className="absence-class-line">
+                              <b>Classes / absent roll numbers:</b>
+                            </div>
+                            <div className="absence-class-list">
+                              {classNames.length ? (
+                                classNames.map((className) => (
+                                  <div
+                                    className="absence-class-entry"
+                                    key={className}
+                                  >
+                                    <span>{className}:</span>
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="absence-writing-space" />
+                              )}
+                            </div>
+                            <div className="absence-signature-line">
+                              <b>Sign:</b>
+                              <span />
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  )),
+                )}
+              </tbody>
+            </table>
+          </PrintPage>
+        )),
+      )}
     </>
   );
 }

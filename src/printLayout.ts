@@ -114,6 +114,8 @@ export function estimatePaper(
   rooms: Room[],
   candidateCount: number,
   dutyCount: number,
+  attendanceDateCount = 1,
+  attendanceSessionCount = 1,
 ): PageEstimate {
   const seatingPages = groupSeatingRooms(rooms, settings.density).length;
   const labelSlots =
@@ -122,14 +124,25 @@ export function estimatePaper(
         ? 2
         : 4
       : Number(settings.labelsPerPage);
-  const attendancePages = Math.ceil(
-    rooms.length /
-      (settings.density === "comfortable"
-        ? 2
-        : settings.density === "compact"
-          ? 4
-          : 4),
+  const attendanceRoomsPerPage =
+    settings.density === "comfortable"
+      ? 4
+      : settings.density === "compact"
+        ? 5
+        : 6;
+  const attendanceRowsPerPage =
+    settings.density === "comfortable"
+      ? 6
+      : settings.density === "compact"
+        ? 10
+        : 12;
+  const attendanceDatesPerPage = Math.max(
+    1,
+    Math.floor(attendanceRowsPerPage / Math.max(1, attendanceSessionCount)),
   );
+  const attendancePages =
+    Math.ceil(rooms.length / attendanceRoomsPerPage) *
+    Math.ceil(attendanceDateCount / attendanceDatesPerPage);
   const pages: Record<Exclude<ReportType, "combined">, number> = {
     seating: seatingPages,
     allocation: rooms.length ? 1 : 0,

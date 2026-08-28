@@ -946,7 +946,7 @@ th {
   margin: 4mm;
 }
 @page room-landscape {
-  size: A4 portrait;
+  size: A4 landscape;
   margin: 4mm;
 }
 @media print {
@@ -1170,6 +1170,86 @@ th {
   }
   .duty-teacher-line + .duty-teacher-line {
     margin-top: 2px;
+  }
+  .attendance-register {
+    table-layout: fixed;
+    width: 100%;
+    height: 178mm;
+    font-size: 8pt;
+  }
+  .attendance-register th,
+  .attendance-register td {
+    border: 0.5px solid #555;
+  }
+  .attendance-register th {
+    text-align: center;
+    vertical-align: middle;
+  }
+  .attendance-register th:first-child,
+  .attendance-register .register-date {
+    width: 18mm;
+  }
+  .attendance-register th:nth-child(2),
+  .attendance-register .register-session {
+    width: 21mm;
+  }
+  .register-date,
+  .register-session {
+    font-weight: 700;
+    vertical-align: middle;
+  }
+  .absence-register-cell {
+    height: 28mm;
+    padding: 2mm !important;
+    vertical-align: top;
+  }
+  .absence-class-line {
+    min-height: 4mm;
+    font-size: 7pt;
+  }
+  .absence-writing-space {
+    min-height: 13mm;
+  }
+  .absence-class-list {
+    display: grid;
+    align-content: start;
+    gap: 2mm;
+    min-height: 13mm;
+    padding-top: 1mm;
+  }
+  .absence-class-entry {
+    display: block;
+    font-size: 7pt;
+  }
+  .attendance-register-page {
+    min-height: 190mm;
+  }
+  .absence-signature-line {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2mm;
+    align-items: center;
+    min-height: 5mm;
+    text-align: left;
+    font-size: 7pt;
+  }
+  .density-compact .absence-register-cell {
+    height: 22mm;
+  }
+  .density-compact .absence-writing-space {
+    min-height: 8mm;
+  }
+  .density-compact .absence-class-list {
+    min-height: 8mm;
+  }
+  .density-maximum .absence-register-cell {
+    height: 18mm;
+  }
+  .density-maximum .absence-writing-space {
+    min-height: 5mm;
+  }
+  .density-maximum .absence-class-list {
+    min-height: 5mm;
   }
   .absence-slip-grid {
     display: grid;
