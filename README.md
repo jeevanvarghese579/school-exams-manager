@@ -33,3 +33,15 @@ The included `firestore.rules` only permits authenticated users to access docume
 ## Production
 
 `npm run build` creates the deployable `dist` directory. Firebase Hosting is configured for React SPA routing on the `school-exams-managerr` site in `firebase.json`.
+
+
+
+git add .
+git commit -m "pdf fixes v3"
+git push
+Implemented.
+Question Paper Count tables now share available page space.
+Additional tables automatically continue onto new PDF pages when needed.
+Page-count preview reflects the packed layout.
+School and examination names are centered and styled as headings in:Exam Absentees Register
+Teacher Duty List

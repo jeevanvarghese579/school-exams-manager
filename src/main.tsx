@@ -3373,6 +3373,14 @@ function AdvancedReports({
       : settings.density === "compact"
         ? 22
         : 30;
+  const questionCountRows = selectedPlans.reduce((total, selectedPlan) => {
+    const subjectCount = new Set(
+      candidatesFor(p, selectedPlan.date, selectedPlan.session).map(
+        (candidate) => candidate.subject,
+      ),
+    ).size;
+    return total + Math.max(1, subjectCount) + 3;
+  }, 0);
   const estimateSections = baseEstimate.sections.map((section) => {
     if (section.label === reportLabels.allocation)
       return {
@@ -3384,10 +3392,17 @@ function AdvancedReports({
           ),
         ),
       };
+    if (section.label === reportLabels["question-count"])
+      return {
+        ...section,
+        pages: Math.max(
+          1,
+          Math.ceil(questionCountRows / allocationRowCapacity),
+        ),
+      };
     if (
       [
         reportLabels.seating,
-        reportLabels["question-count"],
         reportLabels["class-allocation"],
         reportLabels.labels,
       ].includes(section.label)
@@ -3699,6 +3714,9 @@ function PrintDocument(props: PrintDocumentProps) {
       {includes("allocation") && (
         <AllocationReports {...props} plans={plans} />
       )}
+      {includes("question-count") && (
+        <QuestionCountReports {...props} plans={plans} />
+      )}
       {plans.map((plan) => {
         const sessionProps = {
           ...props,
@@ -3707,9 +3725,6 @@ function PrintDocument(props: PrintDocumentProps) {
         };
         return (
           <React.Fragment key={`${plan.date}|${plan.session}`}>
-            {includes("question-count") && (
-              <QuestionCountReport {...sessionProps} />
-            )}
             {includes("class-allocation") && (
               <ClassAllocationReport {...sessionProps} />
             )}
@@ -3727,13 +3742,17 @@ function CompactPrintHeader({
   p,
   plan,
   title,
+  centered = false,
 }: {
   p: Project;
   plan: SeatingPlan;
   title: string;
+  centered?: boolean;
 }) {
   return (
-    <div className="compact-print-header">
+    <div
+      className={`compact-print-header${centered ? " centered-report-header" : ""}`}
+    >
       <b>{title}</b>
       <span>
         {p.school.name} · {p.exam.name} · {formatDate(plan.date)} · {plan.session}
@@ -3904,7 +3923,12 @@ function LegacyDutyReport({
 }: PrintDocumentProps) {
   return (
     <PrintPage settings={settings}>
-      <CompactPrintHeader p={p} plan={plan} title="Teacher Duty List" />
+      <CompactPrintHeader
+        p={p}
+        plan={plan}
+        title="Teacher Duty List"
+        centered
+      />
       <table className="print-table">
         <thead>
           <tr>
@@ -3965,7 +3989,12 @@ function DutyReport({ p, plan, rooms, settings }: PrintDocumentProps) {
       settings={settings}
       orientation={rooms.length > 3 ? "landscape" : "portrait"}
     >
-      <CompactPrintHeader p={p} plan={plan} title="Teacher Duty List" />
+      <CompactPrintHeader
+        p={p}
+        plan={plan}
+        title="Teacher Duty List"
+        centered
+      />
       <table className="print-table duty-matrix">
         <thead>
           <tr>
@@ -4021,55 +4050,112 @@ function DutyReport({ p, plan, rooms, settings }: PrintDocumentProps) {
   );
 }
 
-function QuestionCountReport({
+function QuestionCountReports({
   p,
-  plan,
+  plans,
   rooms,
-  candidates,
   settings,
-}: PrintDocumentProps) {
-  const subjects = [
-    ...new Set(candidates.map((candidate) => candidate.subject)),
-  ];
+}: PrintDocumentProps & { plans: SeatingPlan[] }) {
+  const rowCapacity =
+    settings.density === "comfortable"
+      ? 14
+      : settings.density === "compact"
+        ? 22
+        : 30;
+  const subjectCapacity = Math.max(1, rowCapacity - 3);
+  const blocks = plans.flatMap((plan) => {
+    const candidates = candidatesFor(p, plan.date, plan.session);
+    const subjects = [
+      ...new Set(candidates.map((candidate) => candidate.subject)),
+    ];
+    const printableSubjects = subjects.length ? subjects : [""];
+    return Array.from(
+      {
+        length: Math.max(
+          1,
+          Math.ceil(printableSubjects.length / subjectCapacity),
+        ),
+      },
+      (_, index) => ({
+        plan,
+        candidates,
+        subjects: printableSubjects.slice(
+          index * subjectCapacity,
+          (index + 1) * subjectCapacity,
+        ),
+        part: index,
+      }),
+    );
+  });
+  const pages: typeof blocks[] = [];
+  for (const block of blocks) {
+    const current = pages[pages.length - 1];
+    const usedRows = current?.reduce(
+      (total, item) => total + item.subjects.length + 3,
+      0,
+    );
+    if (current && usedRows + block.subjects.length + 3 <= rowCapacity)
+      current.push(block);
+    else pages.push([block]);
+  }
   return (
-    <PrintPage
-      settings={settings}
-      orientation={rooms.length > 4 ? "landscape" : "portrait"}
-    >
-      <CompactPrintHeader p={p} plan={plan} title="Question Paper Count" />
-      <table className="print-table">
-        <thead>
-          <tr>
-            <th>Subject</th>
-            {rooms.map((room) => (
-              <th key={room.id}>{room.name}</th>
-            ))}
-            <th>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {subjects.map((subject) => {
-            const counts = rooms.map(
-              (room) =>
-                roomCandidates(room, plan, candidates).filter(
-                  (candidate) => candidate.subject === subject,
-                ).length,
-            );
-            return (
-              <tr key={subject}>
-                <td>{subject}</td>
-                {counts.map((count, index) => (
-                  <td key={rooms[index].id}>{count}</td>
-                ))}
-                <td>
-                  <b>{counts.reduce((sum, count) => sum + count, 0)}</b>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </PrintPage>
+    <>
+      {pages.map((page, pageIndex) => (
+        <PrintPage
+          key={pageIndex}
+          settings={settings}
+          orientation={rooms.length > 4 ? "landscape" : "portrait"}
+        >
+          {page.map((block) => (
+            <section
+              className="question-count-report-block"
+              key={`${block.plan.date}|${block.plan.session}|${block.part}`}
+            >
+              <CompactPrintHeader
+                p={p}
+                plan={block.plan}
+                title="Question Paper Count"
+              />
+              <table className="print-table">
+                <thead>
+                  <tr>
+                    <th>Subject</th>
+                    {rooms.map((room) => (
+                      <th key={room.id}>{room.name}</th>
+                    ))}
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.subjects.map((subject, subjectIndex) => {
+                    const counts = rooms.map(
+                      (room) =>
+                        roomCandidates(
+                          room,
+                          block.plan,
+                          block.candidates,
+                        ).filter((candidate) => candidate.subject === subject)
+                          .length,
+                    );
+                    return (
+                      <tr key={subject || subjectIndex}>
+                        <td>{subject || "No subjects"}</td>
+                        {counts.map((count, index) => (
+                          <td key={rooms[index].id}>{count}</td>
+                        ))}
+                        <td>
+                          <b>{counts.reduce((sum, count) => sum + count, 0)}</b>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </section>
+          ))}
+        </PrintPage>
+      ))}
+    </>
   );
 }
 function ClassAllocationReport({
@@ -4291,7 +4377,7 @@ function AttendanceReport({
             orientation="landscape"
             className="attendance-register-page"
           >
-            <div className="compact-print-header">
+            <div className="compact-print-header centered-report-header">
               <b>Exam Absentees Register</b>
               <span>
                 {p.school.name} · {p.exam.name}
