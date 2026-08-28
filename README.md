@@ -50,3 +50,8 @@ Teacher Duty List
 
 
 npm run build && firebase deploy && git add . && git commit -m "profile deletion" && git push
+
+
+new button to add new profile
+
+

@@ -543,6 +543,7 @@ function App() {
             projects={projects}
             setView={setView}
             plan={plan}
+            onCreateProject={() => void create()}
             onOpenProject={openProject}
             onDeleteProject={(target) => void deleteProject(target)}
           />
@@ -711,6 +712,7 @@ const Dashboard = ({
   projects,
   setView,
   plan,
+  onCreateProject,
   onOpenProject,
   onDeleteProject,
 }: {
@@ -718,6 +720,7 @@ const Dashboard = ({
   projects: Project[];
   setView: (view: View) => void;
   plan: SeatingPlan | null;
+  onCreateProject: () => void;
   onOpenProject: (project: Project) => void;
   onDeleteProject: (project: Project) => void;
 }) => (
@@ -753,9 +756,15 @@ const Dashboard = ({
           <h2>Exam profiles</h2>
           <p className="muted">Open or remove examinations saved in this profile.</p>
         </div>
-        <span className="profile-count">
-          {projects.length} {projects.length === 1 ? "profile" : "profiles"}
-        </span>
+        <div className="profile-heading-actions">
+          <span className="profile-count">
+            {projects.length} {projects.length === 1 ? "profile" : "profiles"}
+          </span>
+          <Button onClick={onCreateProject}>
+            <Plus size={16} />
+            New profile
+          </Button>
+        </div>
       </div>
       <div className="exam-profile-grid">
         {[...projects]

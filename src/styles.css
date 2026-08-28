@@ -191,6 +191,13 @@ p {
 .panel-heading-row .muted {
   margin: 5px 0 0;
 }
+.profile-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 .profile-count,
 .exam-profile-title span {
   border-radius: 999px;
