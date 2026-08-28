@@ -81,6 +81,10 @@ type View =
   | "reports"
   | "about";
 const START_SCREEN_KEY = "school-exams-manager:start-screen";
+const formatDate = (value: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : value;
+};
 const Button = ({
   children,
   ...props
@@ -269,6 +273,39 @@ function App() {
       alert(
         error instanceof Error ? error.message : "Unable to generate seating",
       );
+    }
+  };
+  const generateReportPlans = (
+    targets: { date: string; session: string }[],
+    preserveLocks: boolean,
+  ) => {
+    if (!project) return [];
+    try {
+      const generated = targets.map((target) =>
+        buildSeatingForSession(
+          project,
+          target.date,
+          target.session,
+          plan,
+          preserveLocks,
+        ),
+      );
+      const preferred =
+        generated.find(
+          (item) =>
+            item.plan.date === plan?.date &&
+            item.plan.session === plan?.session,
+        ) ?? generated[0];
+      if (preferred) {
+        setPlan(preferred.plan);
+        setDuties(preferred.duties);
+      }
+      return generated.map((item) => item.plan);
+    } catch (error) {
+      alert(
+        error instanceof Error ? error.message : "Unable to generate seating",
+      );
+      return [];
     }
   };
   const create = async () => {
@@ -483,6 +520,7 @@ function App() {
             duties={duties}
             onGenerateSeating={() => generateFromReports(false)}
             onRegenerateUnlocked={() => generateFromReports(true)}
+            onGeneratePlans={generateReportPlans}
           />
         )}
         {view === "about" && (
@@ -641,7 +679,7 @@ const Dashboard = ({
         [
           "Exam days",
           p.exam.startDate && p.exam.endDate
-            ? `${p.exam.startDate} → ${p.exam.endDate}`
+            ? `${formatDate(p.exam.startDate)} → ${formatDate(p.exam.endDate)}`
             : "—",
         ],
         ["Seating plans", plan ? 1 : 0],
@@ -1607,7 +1645,7 @@ function DateTimetable({ p, update }: ProjectEditorProps) {
         })),
       ]);
       setNotice(
-        `${date} · ${session} added. Enter the subject for each class below.`,
+        `${formatDate(date)} · ${session} added. Enter the subject for each class below.`,
       );
     } else {
       setNotice("This date and session is already in the timetable.");
@@ -1624,7 +1662,7 @@ function DateTimetable({ p, update }: ProjectEditorProps) {
       ),
     );
   const deleteDateSession = (item: { date: string; session: string }) => {
-    if (!confirm(`Delete the ${item.session} timetable on ${item.date}?`))
+    if (!confirm(`Delete the ${item.session} timetable on ${formatDate(item.date)}?`))
       return;
     update(
       "timetable",
@@ -1632,7 +1670,7 @@ function DateTimetable({ p, update }: ProjectEditorProps) {
         (entry) => entry.date !== item.date || entry.session !== item.session,
       ),
     );
-    setNotice(`${item.date} · ${item.session} was deleted.`);
+    setNotice(`${formatDate(item.date)} · ${item.session} was deleted.`);
   };
   return (
     <section className="panel">
@@ -1783,7 +1821,7 @@ function DateTimetable({ p, update }: ProjectEditorProps) {
                   ).length;
                   return (
                     <tr key={`${item.date}|${item.session}`}>
-                      <td>{item.date}</td>
+                      <td>{formatDate(item.date)}</td>
                       <td>{item.session}</td>
                       <td>{classCount} classes</td>
                       <td>
@@ -1794,7 +1832,7 @@ function DateTimetable({ p, update }: ProjectEditorProps) {
                               setDate(item.date);
                               setSession(item.session);
                               setNotice(
-                                `Editing ${item.date} · ${item.session}.`,
+                                `Editing ${formatDate(item.date)} · ${item.session}.`,
                               );
                             }}
                           >
@@ -2433,7 +2471,7 @@ function Teachers({
               key={`${item.date}|${item.session}`}
             >
               <h3>
-                {item.date} · {item.session}
+                {formatDate(item.date)} · {item.session}
               </h3>
               <div className="duty-room-grid">
                 {rooms.map((room) => {
@@ -2702,7 +2740,7 @@ function Seating({ p, plan, setPlan, duties, setDuties }: SeatingProps) {
                   key={`${item.date}|${item.session}`}
                   value={`${item.date}|${item.session}`}
                 >
-                  {item.date} · {item.session}
+                  {formatDate(item.date)} · {item.session}
                 </option>
               ))}
             </select>
@@ -2919,7 +2957,7 @@ function HallDiagram({
           <h3>{p.exam.name}</h3>
           <div>
             <span>
-              Date: <b>{plan.date}</b>
+              Date: <b>{formatDate(plan.date)}</b>
             </span>
             <span>
               Session: <b>{plan.session}</b>
@@ -3188,6 +3226,10 @@ function Reports(props: {
   duties: ReturnType<typeof allocateDuties>;
   onGenerateSeating: () => void;
   onRegenerateUnlocked: () => void;
+  onGeneratePlans: (
+    targets: { date: string; session: string }[],
+    preserveLocks: boolean,
+  ) => SeatingPlan[];
 }) {
   if (!props.plan) return <LegacyReports {...props} />;
   return <AdvancedReports {...props} plan={props.plan} />;
@@ -3196,6 +3238,7 @@ function Reports(props: {
 type PrintDocumentProps = {
   p: Project;
   plan: SeatingPlan;
+  plans?: SeatingPlan[];
   duties: ReturnType<typeof allocateDuties>;
   candidates: Candidate[];
   rooms: Room[];
@@ -3205,16 +3248,74 @@ function AdvancedReports({
   p,
   plan,
   duties,
-  onGenerateSeating,
-  onRegenerateUnlocked,
+  onGeneratePlans,
 }: {
   p: Project;
   plan: SeatingPlan;
   duties: ReturnType<typeof allocateDuties>;
   onGenerateSeating: () => void;
   onRegenerateUnlocked: () => void;
+  onGeneratePlans: (
+    targets: { date: string; session: string }[],
+    preserveLocks: boolean,
+  ) => SeatingPlan[];
 }) {
-  const candidates = candidatesFor(p, plan.date, plan.session);
+  const availableSessions = useMemo(
+    () => [
+      ...new Map(
+        p.timetable
+          .filter(
+            (entry) =>
+              entry.type !== "none" && p.exam.sessions.includes(entry.session),
+          )
+          .map((entry) => [
+            `${entry.date}|${entry.session}`,
+            { date: entry.date, session: entry.session },
+          ]),
+      ).values(),
+    ].sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) || a.session.localeCompare(b.session),
+    ),
+    [p.exam.sessions, p.timetable],
+  );
+  const availableDates = [
+    ...new Set(availableSessions.map((item) => item.date)),
+  ];
+  const [selectedDate, setSelectedDate] = useState(plan.date);
+  const [selectedSession, setSelectedSession] = useState(plan.session);
+  const [reportPlans, setReportPlans] = useState<SeatingPlan[]>([plan]);
+  useEffect(() => {
+    setReportPlans((items) => [
+      ...items.filter(
+        (item) => item.date !== plan.date || item.session !== plan.session,
+      ),
+      plan,
+    ]);
+  }, [plan]);
+  const sessionsForDate = availableSessions.filter(
+    (item) => item.date === selectedDate,
+  );
+  const targets =
+    selectedDate === "ALL"
+      ? availableSessions
+      : [
+          sessionsForDate.find((item) => item.session === selectedSession) ??
+            sessionsForDate[0],
+        ].filter(
+          (item): item is { date: string; session: string } => Boolean(item),
+        );
+  const selectedPlans = targets
+    .map((target) =>
+      reportPlans.find(
+        (item) =>
+          item.date === target.date && item.session === target.session,
+      ),
+    )
+    .filter((item): item is SeatingPlan => Boolean(item));
+  const plansReady = targets.length > 0 && selectedPlans.length === targets.length;
+  const primaryPlan = selectedPlans[0] ?? plan;
+  const candidates = candidatesFor(p, primaryPlan.date, primaryPlan.session);
   const activeRooms = p.rooms.filter((room) => room.active);
   const [selectedRoomIds, setSelectedRoomIds] = useState<string[]>(() =>
     activeRooms.map((room) => room.id),
@@ -3240,9 +3341,14 @@ function AdvancedReports({
     [settings],
   );
   const rooms = activeRooms.filter((room) => selectedRoomIds.includes(room.id));
-  const assignmentCount = plan.assignments.filter((assignment) =>
-    rooms.some((room) => assignment.seatId.startsWith(`${room.id}:`)),
-  ).length;
+  const assignmentCount = selectedPlans.reduce(
+    (total, selectedPlan) =>
+      total +
+      selectedPlan.assignments.filter((assignment) =>
+        rooms.some((room) => assignment.seatId.startsWith(`${room.id}:`)),
+      ).length,
+    0,
+  );
   const selectedDuties = duties.filter((duty) =>
     selectedRoomIds.includes(duty.roomId),
   );
@@ -3252,7 +3358,7 @@ function AdvancedReports({
       .map((entry) => entry.date)
       .filter(Boolean),
   ).size;
-  const estimate = estimatePaper(
+  const baseEstimate = estimatePaper(
     settings,
     rooms,
     assignmentCount,
@@ -3260,6 +3366,47 @@ function AdvancedReports({
     Math.max(1, attendanceDateCount),
     Math.max(1, p.exam.sessions.length),
   );
+  const repeatedPlanCount = Math.max(1, selectedPlans.length);
+  const allocationRowCapacity =
+    settings.density === "comfortable"
+      ? 14
+      : settings.density === "compact"
+        ? 22
+        : 30;
+  const estimateSections = baseEstimate.sections.map((section) => {
+    if (section.label === reportLabels.allocation)
+      return {
+        ...section,
+        pages: Math.max(
+          1,
+          Math.ceil(
+            (repeatedPlanCount * (rooms.length + 2)) / allocationRowCapacity,
+          ),
+        ),
+      };
+    if (
+      [
+        reportLabels.seating,
+        reportLabels["question-count"],
+        reportLabels["class-allocation"],
+        reportLabels.labels,
+      ].includes(section.label)
+    )
+      return { ...section, pages: section.pages * repeatedPlanCount };
+    return section;
+  });
+  const estimatedPages = estimateSections.reduce(
+    (total, section) => total + section.pages,
+    0,
+  );
+  const estimate = {
+    ...baseEstimate,
+    sections: estimateSections,
+    pages: estimatedPages,
+    sheets: settings.duplex
+      ? Math.ceil(estimatedPages / 2)
+      : estimatedPages,
+  };
   const setOption = <K extends keyof PrintSettings>(
     key: K,
     value: PrintSettings[K],
@@ -3270,6 +3417,20 @@ function AdvancedReports({
         ? ids.filter((id) => id !== roomId)
         : [...ids, roomId],
     );
+  const generateSelectedPlans = (preserveLocks: boolean) => {
+    const generated = onGeneratePlans(targets, preserveLocks);
+    if (!generated.length) return;
+    setReportPlans((items) => [
+      ...items.filter(
+        (item) =>
+          !generated.some(
+            (next) =>
+              next.date === item.date && next.session === item.session,
+          ),
+      ),
+      ...generated,
+    ]);
+  };
   return (
     <>
       <section className="panel report-generator no-print">
@@ -3282,28 +3443,73 @@ function AdvancedReports({
             </p>
           </div>
           <div className="actions report-generation-actions">
-            <Button onClick={onGenerateSeating}>
+            <Button onClick={() => generateSelectedPlans(false)}>
               <BookOpen />
               Generate seating
             </Button>
-            <Button className="secondary" onClick={onRegenerateUnlocked}>
+            <Button
+              className="secondary"
+              onClick={() => generateSelectedPlans(true)}
+            >
               <LockOpen />
               Regenerate unlocked seats
             </Button>
-            <Button disabled={!rooms.length} onClick={() => window.print()}>
+            <Button
+              disabled={!rooms.length || !plansReady}
+              onClick={() => window.print()}
+            >
               <Printer />
               Generate PDF
             </Button>
           </div>
         </div>
+        {!plansReady && (
+          <p className="warning">
+            Generate seating for the selected date/session before creating the
+            PDF.
+          </p>
+        )}
         <div className="print-config-grid">
           <label>
             Exam date
-            <input type="date" value={plan.date} disabled />
+            <select
+              value={selectedDate}
+              onChange={(event) => {
+                const nextDate = event.target.value;
+                setSelectedDate(nextDate);
+                if (nextDate !== "ALL") {
+                  const firstSession = availableSessions.find(
+                    (item) => item.date === nextDate,
+                  );
+                  if (firstSession) setSelectedSession(firstSession.session);
+                }
+              }}
+            >
+              <option value="ALL">ALL</option>
+              {availableDates.map((date) => (
+                <option key={date} value={date}>
+                  {formatDate(date)}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             Session
-            <input value={plan.session} disabled />
+            <select
+              value={selectedDate === "ALL" ? "ALL" : selectedSession}
+              disabled={selectedDate === "ALL"}
+              onChange={(event) => setSelectedSession(event.target.value)}
+            >
+              {selectedDate === "ALL" ? (
+                <option value="ALL">ALL</option>
+              ) : (
+                sessionsForDate.map((item) => (
+                  <option key={item.session} value={item.session}>
+                    {item.session}
+                  </option>
+                ))
+              )}
+            </select>
           </label>
           <label>
             Report type
@@ -3437,7 +3643,8 @@ function AdvancedReports({
       </section>
       <PrintDocument
         p={p}
-        plan={plan}
+        plan={primaryPlan}
+        plans={selectedPlans.length ? selectedPlans : [primaryPlan]}
         duties={duties}
         candidates={candidates}
         rooms={rooms}
@@ -3472,6 +3679,7 @@ function PrintCheckbox({
 }
 function PrintDocument(props: PrintDocumentProps) {
   const { settings } = props;
+  const plans = props.plans?.length ? props.plans : [props.plan];
   const combinedTypes: Exclude<ReportType, "combined">[] = [
     "allocation",
     "duties",
@@ -3488,13 +3696,30 @@ function PrintDocument(props: PrintDocumentProps) {
     <section
       className={`print-layout density-${settings.density} requested-${settings.orientation}`}
     >
-      {includes("allocation") && <AllocationReport {...props} />}
+      {includes("allocation") && (
+        <AllocationReports {...props} plans={plans} />
+      )}
+      {plans.map((plan) => {
+        const sessionProps = {
+          ...props,
+          plan,
+          candidates: candidatesFor(props.p, plan.date, plan.session),
+        };
+        return (
+          <React.Fragment key={`${plan.date}|${plan.session}`}>
+            {includes("question-count") && (
+              <QuestionCountReport {...sessionProps} />
+            )}
+            {includes("class-allocation") && (
+              <ClassAllocationReport {...sessionProps} />
+            )}
+            {includes("seating") && <SeatingPrintReport {...sessionProps} />}
+            {includes("labels") && <RoomLabelsReport {...sessionProps} />}
+          </React.Fragment>
+        );
+      })}
       {includes("duties") && <DutyReport {...props} />}
-      {includes("question-count") && <QuestionCountReport {...props} />}
-      {includes("class-allocation") && <ClassAllocationReport {...props} />}
-      {includes("seating") && <SeatingPrintReport {...props} />}
       {includes("attendance") && <AttendanceReport {...props} />}
-      {includes("labels") && <RoomLabelsReport {...props} />}
     </section>
   );
 }
@@ -3511,7 +3736,7 @@ function CompactPrintHeader({
     <div className="compact-print-header">
       <b>{title}</b>
       <span>
-        {p.school.name} · {p.exam.name} · {plan.date} · {plan.session}
+        {p.school.name} · {p.exam.name} · {formatDate(plan.date)} · {plan.session}
       </span>
     </div>
   );
@@ -3598,29 +3823,76 @@ function SeatingPrintReport({
     </>
   );
 }
-function AllocationReport({
+function AllocationReports({
   p,
-  plan,
+  plans,
   rooms,
-  candidates,
   settings,
-}: PrintDocumentProps) {
+}: PrintDocumentProps & { plans: SeatingPlan[] }) {
+  const rowCapacity =
+    settings.density === "comfortable"
+      ? 14
+      : settings.density === "compact"
+        ? 22
+        : 30;
+  const blocks = plans.flatMap((plan) =>
+    Array.from(
+      { length: Math.max(1, Math.ceil(rooms.length / rowCapacity)) },
+      (_, index) => ({
+        plan,
+        rooms: rooms.slice(index * rowCapacity, (index + 1) * rowCapacity),
+      }),
+    ),
+  );
+  const pages: typeof blocks[] = [];
+  for (const block of blocks) {
+    const current = pages[pages.length - 1];
+    const usedRows = current?.reduce(
+      (total, item) => total + item.rooms.length + 2,
+      0,
+    );
+    if (current && usedRows + block.rooms.length + 2 <= rowCapacity)
+      current.push(block);
+    else pages.push([block]);
+  }
   return (
-    <PrintPage settings={settings}>
-      <CompactPrintHeader p={p} plan={plan} title="Room Allocation" />
-      <div className="compact-lines">
-        {rooms.map((room) => {
-          const items = roomCandidates(room, plan, candidates);
-          return (
-            <div key={room.id}>
-              <b>{room.name}</b>
-              <span>{compactRanges(items) || "No candidates"}</span>
-              <strong>Total: {items.length}</strong>
-            </div>
-          );
-        })}
-      </div>
-    </PrintPage>
+    <>
+      {pages.map((page, pageIndex) => (
+        <PrintPage key={pageIndex} settings={settings}>
+          {page.map((block) => {
+            const candidates = candidatesFor(
+              p,
+              block.plan.date,
+              block.plan.session,
+            );
+            return (
+              <section
+                className="allocation-report-block"
+                key={`${block.plan.date}|${block.plan.session}|${block.rooms[0]?.id ?? "empty"}`}
+              >
+                <CompactPrintHeader
+                  p={p}
+                  plan={block.plan}
+                  title="Room Allocation"
+                />
+                <div className="compact-lines">
+                  {block.rooms.map((room) => {
+                    const items = roomCandidates(room, block.plan, candidates);
+                    return (
+                      <div key={room.id}>
+                        <b>{room.name}</b>
+                        <span>{compactRanges(items) || "No candidates"}</span>
+                        <strong>Total: {items.length}</strong>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </PrintPage>
+      ))}
+    </>
   );
 }
 function LegacyDutyReport({
@@ -3647,7 +3919,7 @@ function LegacyDutyReport({
             .filter((duty) => rooms.some((room) => room.id === duty.roomId))
             .map((duty) => (
               <tr key={`${duty.roomId}-${duty.teacherId}`}>
-                <td>{plan.date}</td>
+                <td>{formatDate(plan.date)}</td>
                 <td>{plan.session}</td>
                 <td>{rooms.find((room) => room.id === duty.roomId)?.name}</td>
                 <td>
@@ -3710,7 +3982,7 @@ function DutyReport({ p, plan, rooms, settings }: PrintDocumentProps) {
             const firstDateRow = previous?.date !== item.date;
             return (
               <tr key={`${item.date}-${item.session}`}>
-                <td>{firstDateRow ? item.date : ""}</td>
+                <td>{firstDateRow ? formatDate(item.date) : ""}</td>
                 <td>{item.session}</td>
                 {rooms.map((room) => {
                   const hallAssignments = rosterAssignments
@@ -4044,7 +4316,7 @@ function AttendanceReport({
                     <tr key={`${date}-${session}`}>
                       {sessionIndex === 0 && (
                         <td rowSpan={sessions.length} className="register-date">
-                          {date}
+                          {formatDate(date)}
                         </td>
                       )}
                       <td className="register-session">{session}</td>
@@ -4122,7 +4394,7 @@ function RoomLabelsReport({
                   <h2>{room.name}</h2>
                   <p>{p.exam.name}</p>
                   <b>
-                    {plan.date} · {plan.session}
+                    {formatDate(plan.date)} · {plan.session}
                   </b>
                   <div>{compactRanges(items)}</div>
                   <strong>Total: {items.length}</strong>
