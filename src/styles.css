@@ -275,6 +275,29 @@ th {
   gap: 10px;
   margin: 25px;
 }
+.hero .welcome-auth {
+  align-items: center;
+  margin: 24px 0 14px;
+}
+.hero .welcome-actions {
+  margin: 14px 0 24px;
+}
+.google-login {
+  background: #fff;
+  color: #253047;
+  border: 1px solid #cfd6e2;
+  box-shadow: 0 1px 3px #1720331f;
+}
+.google-login:hover {
+  background: #f8fafc;
+}
+.google-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #364152;
+  overflow-wrap: anywhere;
+}
 .about a {
   color: #0f766e;
   font-weight: 700;
@@ -1070,6 +1093,19 @@ th {
   .duty-matrix td {
     text-align: center;
     vertical-align: middle;
+    overflow-wrap: anywhere;
+  }
+  .duty-matrix {
+    table-layout: fixed;
+    font-size: 7pt;
+  }
+  .duty-matrix th:first-child,
+  .duty-matrix td:first-child {
+    width: 15%;
+  }
+  .duty-matrix th:nth-child(2),
+  .duty-matrix td:nth-child(2) {
+    width: 13%;
   }
   .duty-matrix td:first-child,
   .duty-matrix td:nth-child(2) {
@@ -1136,6 +1172,11 @@ th {
   .density-maximum .print-table td {
     padding: 1.2mm;
     font-size: 7.5pt;
+  }
+  .density-maximum .duty-matrix th,
+  .density-maximum .duty-matrix td {
+    padding: 0.8mm;
+    font-size: 6.2pt;
   }
   .density-comfortable .print-table th,
   .density-comfortable .print-table td {

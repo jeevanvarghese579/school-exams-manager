@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- this file is the application entry point */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import type { User } from "firebase/auth";
 import {
   Archive,
   BookOpen,
@@ -11,6 +12,7 @@ import {
   Home,
   Lock,
   LockOpen,
+  LogOut,
   MapPin,
   Plus,
   Printer,
@@ -19,7 +21,14 @@ import {
   Users,
 } from "lucide-react";
 import { db, saveProject } from "./db";
-import { demoProject } from "./demo";
+import {
+  firebaseReady,
+  googleSignIn,
+  loadCloudProjects,
+  logOut,
+  observeAuth,
+  syncProject,
+} from "./firebase";
 import {
   emptyProject,
   type Candidate,
@@ -67,6 +76,7 @@ type View =
   | "seating"
   | "reports"
   | "about";
+const START_SCREEN_KEY = "school-exams-manager:start-screen";
 const Button = ({
   children,
   ...props
@@ -79,15 +89,113 @@ function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [view, setView] = useState<View>("dashboard");
   const [status, setStatus] = useState("Local Only");
+  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [cloudProjectsLoading, setCloudProjectsLoading] = useState(false);
   const [plan, setPlan] = useState<SeatingPlan | null>(null);
   const [duties, setDuties] = useState<ReturnType<typeof allocateDuties>>([]);
   const restoreInputRef = useRef<HTMLInputElement>(null);
+  const currentProjectRef = useRef<Project | null>(null);
+  useEffect(() => {
+    currentProjectRef.current = project;
+  }, [project]);
   useEffect(() => {
     db.projects.toArray().then((items) => {
       setProjects(items);
-      setProject(items.find((item) => !item.archived) ?? null);
+      if (localStorage.getItem(START_SCREEN_KEY) !== "true") {
+        const nextProject = items.find((item) => !item.archived) ?? null;
+        currentProjectRef.current = nextProject;
+        setProject(nextProject);
+      }
     });
   }, []);
+  useEffect(
+    () =>
+      observeAuth((user) => {
+        setFirebaseUser(user);
+        setStatus(user ? "Firebase connected" : "Local Only");
+      }),
+    [],
+  );
+  useEffect(() => {
+    if (!firebaseUser) {
+      setCloudProjectsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setCloudProjectsLoading(true);
+    setStatus("Loading Firebase projects…");
+    loadCloudProjects(firebaseUser.uid)
+      .then(async (cloudProjects) => {
+        if (cancelled) return;
+        const localProjects = await db.projects.toArray();
+        const merged = new Map(localProjects.map((item) => [item.id, item]));
+        for (const cloudProject of cloudProjects) {
+          const localProject = merged.get(cloudProject.id);
+          if (!localProject || cloudProject.updatedAt >= localProject.updatedAt) {
+            merged.set(cloudProject.id, cloudProject);
+          }
+        }
+        let mergedProjects = [...merged.values()];
+        await Promise.all(mergedProjects.map((item) => saveProject(item)));
+        if (cancelled) return;
+
+        if (!currentProjectRef.current) {
+          let nextProject = mergedProjects
+            .filter((item) => !item.archived)
+            .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+          const isNewProject = !nextProject;
+          if (!nextProject) {
+            nextProject = emptyProject();
+            await saveProject(nextProject);
+            mergedProjects = [...mergedProjects, nextProject];
+          }
+          if (cancelled) return;
+          localStorage.removeItem(START_SCREEN_KEY);
+          currentProjectRef.current = nextProject;
+          setProject(nextProject);
+          setView(isNewProject ? "setup" : "dashboard");
+        }
+        setProjects(mergedProjects);
+        setStatus(
+          cloudProjects.length
+            ? `Firebase · ${cloudProjects.length} project${cloudProjects.length === 1 ? "" : "s"} loaded`
+            : "Firebase connected · No cloud projects yet",
+        );
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setStatus("Firebase · Could not load projects");
+        console.error("Could not load Firebase projects", error);
+
+        // Authentication still succeeded. Enter a local project even when the
+        // initial cloud read is unavailable, so sign-in never strands the user
+        // on the welcome screen.
+        void db.projects.toArray().then(async (localProjects) => {
+          if (cancelled || currentProjectRef.current) return;
+          let nextProject = localProjects
+            .filter((item) => !item.archived)
+            .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+          const isNewProject = !nextProject;
+          if (!nextProject) {
+            nextProject = emptyProject();
+            await saveProject(nextProject);
+            localProjects = [...localProjects, nextProject];
+          }
+          if (cancelled) return;
+          localStorage.removeItem(START_SCREEN_KEY);
+          currentProjectRef.current = nextProject;
+          setProjects(localProjects);
+          setProject(nextProject);
+          setView(isNewProject ? "setup" : "dashboard");
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setCloudProjectsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [firebaseUser]);
   const persist = async (next: Project) => {
     setProject(next);
     setProjects((items) => [
@@ -96,12 +204,67 @@ function App() {
     ]);
     setStatus("Saving…");
     await saveProject(next);
-    setStatus("Local Only · Saved");
+    setStatus(firebaseUser ? "Local saved · Cloud pending" : "Local Only · Saved");
   };
-  const create = async (demo = false) => {
-    const next = demo ? demoProject() : emptyProject();
+  const connectFirebase = async () => {
+    try {
+      await googleSignIn();
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? `Could not sign in to Firebase: ${error.message}`
+          : "Could not sign in to Firebase.",
+      );
+    }
+  };
+  const saveToCloud = async () => {
+    if (!firebaseUser || !project) return;
+    try {
+      setStatus("Syncing to Firebase…");
+      await syncProject(firebaseUser.uid, project);
+      setStatus("Firebase · Synced");
+    } catch (error) {
+      setStatus("Firebase · Sync failed");
+      alert(
+        error instanceof Error
+          ? `Could not sync this project: ${error.message}`
+          : "Could not sync this project.",
+      );
+    }
+  };
+  const create = async () => {
+    localStorage.removeItem(START_SCREEN_KEY);
+    const next = emptyProject();
     await persist(next);
     setView("setup");
+  };
+  const workOffline = async () => {
+    localStorage.removeItem(START_SCREEN_KEY);
+    const localProjects = await db.projects.toArray();
+    const nextProject = localProjects
+      .filter((item) => !item.archived)
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (!nextProject) {
+      await create();
+      return;
+    }
+    currentProjectRef.current = nextProject;
+    setProjects(localProjects);
+    setProject(nextProject);
+    setStatus("Local Only");
+    setView("dashboard");
+  };
+  const leaveApp = async () => {
+    try {
+      if (firebaseUser) await logOut();
+    } finally {
+      localStorage.setItem(START_SCREEN_KEY, "true");
+      setProject(null);
+      setPlan(null);
+      setDuties([]);
+      setStatus("Local Only");
+      setView("dashboard");
+    }
   };
   const update = (key: keyof Project, value: unknown) =>
     project && persist({ ...project, [key]: value });
@@ -126,7 +289,18 @@ function App() {
       );
     }
   };
-  if (!project) return <Welcome onCreate={create} />;
+  if (!project)
+    return (
+      <Welcome
+        onWorkOffline={workOffline}
+        firebaseUser={firebaseUser}
+        firebaseReady={firebaseReady}
+        onGoogleSignIn={connectFirebase}
+        onSignOut={() => void logOut()}
+        cloudProjectsLoading={cloudProjectsLoading}
+        firebaseStatus={status}
+      />
+    );
   const nav: [View, string, React.ElementType][] = [
     ["dashboard", "Dashboard", Home],
     ["setup", "Exam setup", Settings],
@@ -172,9 +346,13 @@ function App() {
           </button>
         ))}
         <div className="sidebottom">
-          <Button onClick={() => create(false)}>
+          <Button onClick={create}>
             <Plus size={16} />
             New project
+          </Button>
+          <Button onClick={() => void leaveApp()}>
+            <LogOut size={16} />
+            {firebaseUser ? "Log out" : "Exit offline mode"}
           </Button>
           <small>{status}</small>
         </div>
@@ -203,6 +381,34 @@ function App() {
               <Upload size={16} />
               Restore
             </Button>
+            {firebaseUser ? (
+              <>
+                <Button onClick={saveToCloud} title="Save this project to Firestore">
+                  <Cloud size={16} />
+                  Sync
+                </Button>
+                <Button
+                  className="secondary"
+                  onClick={() => void logOut()}
+                  title={`Signed in as ${firebaseUser.email ?? firebaseUser.displayName ?? "Firebase user"}`}
+                >
+                  {firebaseUser.email ?? "Sign out"}
+                </Button>
+              </>
+            ) : (
+              <Button
+                onClick={connectFirebase}
+                disabled={!firebaseReady}
+                title={
+                  firebaseReady
+                    ? "Sign in with Google to enable cloud sync"
+                    : "Firebase environment variables are missing"
+                }
+              >
+                <Cloud size={16} />
+                Sign in with Google
+              </Button>
+            )}
           </div>
         </header>
         <input
@@ -290,7 +496,34 @@ function downloadProject(project: Project) {
   link.click();
   URL.revokeObjectURL(link.href);
 }
-function Welcome({ onCreate }: { onCreate: (demo?: boolean) => void }) {
+function GoogleMark() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+      <path fill="#4285f4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.07H12v3.91h5.38a4.6 4.6 0 0 1-2 3.02v2.54h3.24c1.9-1.75 2.98-4.33 2.98-7.4Z" />
+      <path fill="#34a853" d="M12 22c2.7 0 4.98-.9 6.63-2.37l-3.24-2.54c-.9.6-2.05.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.04v2.62A10 10 0 0 0 12 22Z" />
+      <path fill="#fbbc05" d="M6.39 13.92A6.02 6.02 0 0 1 6.07 12c0-.67.12-1.32.32-1.92V7.46H3.04A10 10 0 0 0 2 12c0 1.61.39 3.14 1.04 4.54l3.35-2.62Z" />
+      <path fill="#ea4335" d="M12 5.95c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.64 9.64 0 0 0 12 2a10 10 0 0 0-8.96 5.46l3.35 2.62C7.18 7.71 9.39 5.95 12 5.95Z" />
+    </svg>
+  );
+}
+
+function Welcome({
+  onWorkOffline,
+  firebaseUser,
+  firebaseReady,
+  onGoogleSignIn,
+  onSignOut,
+  cloudProjectsLoading,
+  firebaseStatus,
+}: {
+  onWorkOffline: () => void;
+  firebaseUser: User | null;
+  firebaseReady: boolean;
+  onGoogleSignIn: () => void;
+  onSignOut: () => void;
+  cloudProjectsLoading: boolean;
+  firebaseStatus: string;
+}) {
   return (
     <div className="welcome">
       <div className="hero">
@@ -300,19 +533,38 @@ function Welcome({ onCreate }: { onCreate: (demo?: boolean) => void }) {
           Plan examinations, arrange seating, assign invigilators, and print
           everything your school needs — even without internet.
         </p>
-        <div>
-          <Button onClick={() => onCreate(false)}>
+        <div className="welcome-auth">
+          {firebaseUser ? (
+            <>
+              <span className="google-user">
+                <GoogleMark />
+                Signed in as {firebaseUser.email ?? firebaseUser.displayName}
+              </span>
+              <Button className="secondary" onClick={onSignOut}>
+                Sign out
+              </Button>
+            </>
+          ) : (
+            <Button
+              className="google-login"
+              onClick={onGoogleSignIn}
+              disabled={!firebaseReady}
+            >
+              <GoogleMark />
+              Sign in with Google
+            </Button>
+          )}
+        </div>
+        <div className="welcome-actions">
+          <Button onClick={onWorkOffline} disabled={cloudProjectsLoading}>
             <BookOpen />
-            Use Offline
-          </Button>
-          <Button className="secondary" onClick={() => onCreate(true)}>
-            <Plus />
-            Load Demo School
+            Work offline
           </Button>
         </div>
         <small>
-          Local projects stay only on this device until you choose to move them
-          to cloud.
+          {firebaseUser
+            ? firebaseStatus
+            : "Sign in for Firebase cloud sync, or continue offline on this device."}
         </small>
       </div>
     </div>
@@ -385,8 +637,17 @@ const Dashboard = ({
 
 function Setup({ p, save }: { p: Project; save: (project: Project) => void }) {
   const [rawSessions, setRawSessions] = useState(p.exam.sessions.join(", "));
-  const set = (path: "school" | "exam", key: string, value: string) =>
-    save({ ...p, [path]: { ...p[path], [key]: value } });
+  const set = (path: "school" | "exam", key: string, value: string) => {
+    const nextProject = {
+      ...p,
+      [path]: { ...p[path], [key]: value },
+    };
+    save(
+      path === "exam" && key === "name"
+        ? { ...nextProject, name: value.trim() || "New Examination" }
+        : nextProject,
+    );
+  };
   return (
     <section className="panel form">
       <h2>Exam setup</h2>
@@ -3175,7 +3436,8 @@ function LegacyDutyReport({
   );
 }
 function DutyReport({ p, plan, rooms, settings }: PrintDocumentProps) {
-  if (!p.exam.sessions.length)
+  const rosterAssignments = p.dutyAssignments ?? [];
+  if (!rosterAssignments.length)
     return (
       <LegacyDutyReport
         p={p}
@@ -3186,14 +3448,20 @@ function DutyReport({ p, plan, rooms, settings }: PrintDocumentProps) {
         settings={settings}
       />
     );
-  const dates = [...new Set(p.timetable.map((entry) => entry.date))].sort();
-  const dutiesFor = (date: string, session: string) =>
-    allocateDuties(
-      rooms.map((room) => room.id),
-      p.teachers,
-      `${date}|${session}`,
-      p.rules.invigilatorsPerRoom,
-    );
+  const sessions = [
+    ...new Map(
+      rosterAssignments.map((assignment) => [
+        `${assignment.date}|${assignment.session}`,
+        { date: assignment.date, session: assignment.session },
+      ]),
+    ).values(),
+  ].sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) ||
+      Number(/afternoon/i.test(a.session)) -
+        Number(/afternoon/i.test(b.session)) ||
+      a.session.localeCompare(b.session),
+  );
   return (
     <PrintPage
       settings={settings}
@@ -3211,32 +3479,33 @@ function DutyReport({ p, plan, rooms, settings }: PrintDocumentProps) {
           </tr>
         </thead>
         <tbody>
-          {dates.flatMap((date) => {
-            const sessions = p.exam.sessions.filter((session) =>
-              p.timetable.some(
-                (entry) => entry.date === date && entry.session === session,
-              ),
+          {sessions.map((item, index) => {
+            const previous = sessions[index - 1];
+            const firstDateRow = previous?.date !== item.date;
+            return (
+              <tr key={`${item.date}-${item.session}`}>
+                <td>{firstDateRow ? item.date : ""}</td>
+                <td>{item.session}</td>
+                {rooms.map((room) => (
+                  <td key={room.id}>
+                    {rosterAssignments
+                      .filter(
+                        (assignment) =>
+                          assignment.date === item.date &&
+                          assignment.session === item.session &&
+                          assignment.roomId === room.id,
+                      )
+                      .map(
+                        (assignment) =>
+                          p.teachers.find(
+                            (teacher) => teacher.id === assignment.teacherId,
+                          )?.name ?? "—",
+                      )
+                      .join(" / ") || "—"}
+                  </td>
+                ))}
+              </tr>
             );
-            return sessions.map((session, index) => {
-              const assignments = dutiesFor(date, session);
-              return (
-                <tr key={`${date}-${session}`}>
-                  {index === 0 && <td rowSpan={sessions.length}>{date}</td>}
-                  <td>{session}</td>
-                  {rooms.map((room) => (
-                    <td key={room.id}>
-                      {assignments.map((assignment) =>
-                        assignment.roomId === room.id
-                          ? (p.teachers.find(
-                              (teacher) => teacher.id === assignment.teacherId,
-                            )?.name ?? "—")
-                          : null,
-                      )}
-                    </td>
-                  ))}
-                </tr>
-              );
-            });
           })}
         </tbody>
       </table>
