@@ -8,15 +8,9 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  initializeFirestore,
-  setDoc,
-} from "firebase/firestore";
+import { deleteDoc, getDocs, initializeFirestore, setDoc } from "firebase/firestore";
 import type { Project } from "./models";
+import { projectDocument, projectsCollection } from "./firebasePaths";
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -59,16 +53,16 @@ export const logOut = () => (auth ? signOut(auth) : Promise.resolve());
 
 export const syncProject = async (uid: string, project: Project) => {
   if (!store) throw new Error("Firebase is unavailable.");
-  await setDoc(doc(store, "users", uid, "projects", project.id), project);
+  await setDoc(projectDocument(store, uid, project.id), project);
 };
 
 export const deleteCloudProject = async (uid: string, projectId: string) => {
   if (!store) throw new Error("Firebase is unavailable.");
-  await deleteDoc(doc(store, "users", uid, "projects", projectId));
+  await deleteDoc(projectDocument(store, uid, projectId));
 };
 
 export const loadCloudProjects = async (uid: string): Promise<Project[]> => {
   if (!store) throw new Error("Firebase is unavailable.");
-  const snapshot = await getDocs(collection(store, "users", uid, "projects"));
+  const snapshot = await getDocs(projectsCollection(store, uid));
   return snapshot.docs.map((projectDocument) => projectDocument.data() as Project);
 };
