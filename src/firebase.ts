@@ -18,6 +18,7 @@ import {
 } from "firebase/firestore";
 import type { Project } from "./models";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { offerAccessRequest } from "./accessRequestDialog";
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -50,9 +51,14 @@ if (app && config.measurementId) {
 const requireAppAccess = async (user: User) => {
   if (!functions || !config.appId) throw new Error("Firebase Access Manager is not configured.");
   const result = await httpsCallable(functions, "checkMyAccess")({ appId: config.appId });
-  const data = result.data && typeof result.data === "object" ? result.data as { allowed?: boolean } : {};
+  const data = result.data && typeof result.data === "object" ? result.data as { allowed?: boolean; requestStatus?: string } : {};
   if (data.allowed !== true) {
-    throw new Error("Your account is not approved for School Exams Manager. Contact the administrator for access.");
+    await offerAccessRequest({
+      appName: "School Exams Manager",
+      requestStatus: data.requestStatus,
+      sendRequest: async () => (await httpsCallable(functions, "requestAppAccess")({ appId: config.appId, requestType: "access-request" })).data,
+    });
+    throw new Error(data.requestStatus === "pending" ? "Your access request is awaiting administrator approval." : "Your account is not approved for School Exams Manager.");
   }
   return user;
 };
