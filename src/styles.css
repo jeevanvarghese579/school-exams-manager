@@ -756,12 +756,25 @@ th {
 .subject-list {
   display: grid;
   gap: 6px;
+  overflow-x: auto;
 }
 .subject-list > div {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 110px 34px 34px auto;
+  grid-template-columns: minmax(160px, 1fr) 110px minmax(140px, 0.7fr) minmax(130px, 0.6fr) 34px 34px auto;
   gap: 6px;
   align-items: center;
+  min-width: 850px;
+}
+.subject-list .subject-list-header {
+  color: #4b5565;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 2px;
+  text-transform: uppercase;
+}
+.subject-row select:disabled {
+  background: #f3f4f6;
+  color: #9ca3af;
 }
 .subject-list em {
   font-size: 11px;

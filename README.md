@@ -22,13 +22,24 @@ npm run build
 
 ## Firebase setup
 
-1. Create a Firebase project and enable **Google** in Authentication providers.
-2. Create a Firestore database.
-3. Firebase web app values are loaded from `.env` (use `.env.example` as the template for another Firebase project).
-4. Install Firebase CLI and authenticate: `npm install -g firebase-tools` then `firebase login`.
-5. Build and deploy Hosting plus Firestore rules: `npm run build` then `firebase deploy`.
+1. Firebase web app values are loaded from `.env`; use `.env.example` as the variable template and preserve the production app identifiers below.
+2. Google sign-in is checked by Firebase Access Manager before any cloud project data is loaded.
+3. Cloud projects are stored only under `/apps/schoolExamsManager/users/{uid}/projects/{projectId}`.
+4. Build with `npm run build`. If Hosting is intentionally deployed, scope it to this app with `firebase deploy --only hosting:school-exams-managerr`.
 
-The included `firestore.rules` only permits authenticated users to access documents in `users/{uid}/…`. Sign in with Google and choose **Sync** to upload the current project. Local projects are not uploaded automatically. Use exported JSON backups for portable local projects.
+Sign in with Google and choose **Sync** to upload the current project. Local projects are not uploaded automatically. Use exported JSON backups for portable local projects.
+
+## Firebase application isolation
+
+This is an existing isolated app.
+
+- Canonical appKey: `schoolExamsManager`
+- Firebase Web App ID: `1:379503088311:web:e737a88b7ad8c245133332`
+- Hosting site: `school-exams-managerr`
+
+Preserve these identifiers and the existing Firestore data paths. Do not create a new namespace or migrate data unless explicitly requested.
+
+The only authoritative Firestore and Storage rules repository is [school-softwares-firebase-shared-config](https://github.com/jeevanvarghese579/school-softwares-firebase-shared-config). Do not create, replace, or deploy Firestore or Storage rules from this repository, and never run an unscoped `firebase deploy`. If this app needs additional permissions, make the smallest possible change in the canonical shared-rules repository, add emulator coverage, run every existing app rules test and a Firebase dry run, then obtain explicit approval before deployment.
 
 ## Production
 

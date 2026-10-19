@@ -84,6 +84,7 @@ export interface TimetableEntry {
   date: string;
   session: string;
   classId: Id;
+  subjectId?: Id;
   subject: string;
   subjectCode?: string;
   type: "normal" | "language" | "none";

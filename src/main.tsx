@@ -5,7 +5,6 @@ import type { User } from "firebase/auth";
 import {
   Archive,
   BookOpen,
-  CalendarDays,
   Cloud,
   Download,
   GraduationCap,
@@ -425,7 +424,6 @@ function App() {
     ["setup", "Exam setup", Settings],
     ["classes", "Classes & Subjects", Users],
     ["rooms", "Rooms", MapPin],
-    ["timetable", "Exam Timetable", CalendarDays],
     ["teachers", "Teachers Duty Allotment", GraduationCap],
     ["seating", "Seating", BookOpen],
     ["reports", "Reports", Printer],
@@ -549,7 +547,7 @@ function App() {
           />
         )}
         {view === "setup" && <Setup p={project} save={persist} />}
-        {view === "classes" && <Classes p={project} update={update} />}
+        {view === "classes" && <Classes p={project} save={persist} />}
         {view === "rooms" && <Rooms p={project} update={update} />}
         {view === "timetable" && <Timetable p={project} update={update} />}
         {view === "teachers" && (
@@ -816,7 +814,7 @@ const Dashboard = ({
         ["School configured", !!p.school.name, "setup"],
         ["Classes added", p.classes.length > 0, "classes"],
         ["Active rooms", roomSeats(p.rooms).length > 0, "rooms"],
-        ["Timetable configured", p.timetable.length > 0, "timetable"],
+        ["Timetable configured", p.timetable.length > 0, "classes"],
         ["Teachers added", p.teachers.length > 0, "teachers"],
       ].map(([label, ok, target]) => (
         <button
@@ -834,7 +832,7 @@ const Dashboard = ({
       <div className="actions">
         <Button onClick={() => setView("seating")}>Generate seating</Button>
         <Button onClick={() => setView("reports")}>Open reports</Button>
-        <Button onClick={() => setView("timetable")}>Edit timetable</Button>
+        <Button onClick={() => setView("classes")}>Edit timetable</Button>
       </div>
     </section>
   </>
@@ -935,48 +933,182 @@ function Setup({ p, save }: { p: Project; save: (project: Project) => void }) {
   );
 }
 
-function Classes({ p, update }: ProjectEditorProps) {
+function Classes({
+  p,
+  save,
+}: {
+  p: Project;
+  save: (project: Project) => void;
+}) {
   const [rawLanguages, setRawLanguages] = useState(p.languages.join(", "));
   const add = () =>
-    update("classes", [
-      ...p.classes,
-      {
-        id: uid(),
-        name: "New class",
-        studentCount: 0,
-        rollStart: 1,
-        active: true,
-        languageCounts: {},
-      },
-    ]);
+    save({
+      ...p,
+      classes: [
+        ...p.classes,
+        {
+          id: uid(),
+          name: "New class",
+          studentCount: 0,
+          rollStart: 1,
+          active: true,
+          languageCounts: {},
+        },
+      ],
+    });
   const changeSubjects = (
     classId: string,
     subjects: NonNullable<(typeof p.classes)[number]["subjects"]>,
   ) =>
-    update(
-      "classes",
-      p.classes.map((group) =>
+    save({
+      ...p,
+      classes: p.classes.map((group) =>
         group.id === classId ? { ...group, subjects } : group,
       ),
-    );
+    });
   const changeRanges = (
     classId: string,
     ranges: NonNullable<(typeof p.classes)[number]["languageRanges"]>,
   ) =>
-    update(
-      "classes",
-      p.classes.map((group) =>
+    save({
+      ...p,
+      classes: p.classes.map((group) =>
         group.id === classId ? { ...group, languageRanges: ranges } : group,
       ),
-    );
+    });
   const saveLanguages = () =>
-    update(
-      "languages",
-      rawLanguages
+    save({
+      ...p,
+      languages: rawLanguages
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean),
+    });
+  const entryForSubject = (
+    classId: string,
+    subject: NonNullable<(typeof p.classes)[number]["subjects"]>[number],
+  ) =>
+    p.timetable.find(
+      (entry) =>
+        entry.classId === classId &&
+        (entry.subjectId === subject.id ||
+          (!entry.subjectId &&
+            (subject.type === "second-language"
+              ? entry.type === "language"
+              : entry.type === "normal" && entry.subject === subject.name))),
     );
+  const scheduleSubject = (
+    classId: string,
+    subject: NonNullable<(typeof p.classes)[number]["subjects"]>[number],
+    values: { date?: string; session?: string },
+  ) => {
+    const existing = entryForSubject(classId, subject);
+    const date = values.date ?? existing?.date ?? "";
+    const session =
+      values.session ?? existing?.session ?? p.exam.sessions[0] ?? "";
+
+    if (!date) {
+      if (existing) {
+        save({
+          ...p,
+          timetable: p.timetable.filter((entry) => entry.id !== existing.id),
+        });
+      }
+      return;
+    }
+    if (!session) {
+      alert("Add at least one exam session in Exam setup first.");
+      return;
+    }
+
+    const conflict = p.timetable.find(
+      (entry) =>
+        entry.id !== existing?.id &&
+        entry.classId === classId &&
+        entry.date === date &&
+        entry.session === session &&
+        entry.type !== "none",
+    );
+    if (conflict) {
+      alert(
+        `This class already has ${conflict.subject || "an exam"} in that date and session.`,
+      );
+      return;
+    }
+
+    const nextEntry = {
+      id: existing?.id ?? uid(),
+      date,
+      session,
+      classId,
+      subjectId: subject.id,
+      subject:
+        subject.type === "second-language"
+          ? "Second Language"
+          : subject.name,
+      type:
+        subject.type === "second-language"
+          ? ("language" as const)
+          : ("normal" as const),
+    };
+    save({
+      ...p,
+      timetable: existing
+        ? p.timetable.map((entry) =>
+            entry.id === existing.id ? nextEntry : entry,
+          )
+        : [...p.timetable, nextEntry],
+    });
+  };
+  const renameSubject = (
+    classId: string,
+    subject: NonNullable<(typeof p.classes)[number]["subjects"]>[number],
+    name: string,
+  ) =>
+    save({
+      ...p,
+      classes: p.classes.map((group) =>
+        group.id === classId
+          ? {
+              ...group,
+              subjects: (group.subjects ?? []).map((item) =>
+                item.id === subject.id ? { ...item, name } : item,
+              ),
+            }
+          : group,
+      ),
+      timetable: p.timetable.map((entry) =>
+        entry.classId === classId &&
+        subject.type === "normal" &&
+        entry.type === "normal" &&
+        (entry.subjectId === subject.id ||
+          (!entry.subjectId && entry.subject === subject.name))
+          ? { ...entry, subject: name }
+          : entry,
+      ),
+    });
+  const deleteSubject = (
+    classId: string,
+    subject: NonNullable<(typeof p.classes)[number]["subjects"]>[number],
+  ) => {
+    const scheduledEntry = entryForSubject(classId, subject);
+    save({
+      ...p,
+      classes: p.classes.map((group) =>
+        group.id === classId
+          ? {
+              ...group,
+              subjects: (group.subjects ?? []).filter(
+                (item) => item.id !== subject.id,
+              ),
+            }
+          : group,
+      ),
+      timetable: scheduledEntry
+        ? p.timetable.filter((entry) => entry.id !== scheduledEntry.id)
+        : p.timetable,
+    });
+  };
   return (
     <section className="panel">
       <div className="row">
@@ -1008,14 +1140,14 @@ function Classes({ p, update }: ProjectEditorProps) {
                   <input
                     value={group.name}
                     onChange={(event) =>
-                      update(
-                        "classes",
-                        p.classes.map((item) =>
+                      save({
+                        ...p,
+                        classes: p.classes.map((item) =>
                           item.id === group.id
                             ? { ...item, name: event.target.value }
                             : item,
                         ),
-                      )
+                      })
                     }
                   />
                 </td>
@@ -1025,9 +1157,9 @@ function Classes({ p, update }: ProjectEditorProps) {
                     min="0"
                     value={group.studentCount}
                     onChange={(event) =>
-                      update(
-                        "classes",
-                        p.classes.map((item) =>
+                      save({
+                        ...p,
+                        classes: p.classes.map((item) =>
                           item.id === group.id
                             ? {
                                 ...item,
@@ -1035,7 +1167,7 @@ function Classes({ p, update }: ProjectEditorProps) {
                               }
                             : item,
                         ),
-                      )
+                      })
                     }
                   />
                 </td>
@@ -1046,10 +1178,13 @@ function Classes({ p, update }: ProjectEditorProps) {
                     className="danger"
                     onClick={() =>
                       confirm(`Delete ${group.name}?`) &&
-                      update(
-                        "classes",
-                        p.classes.filter((item) => item.id !== group.id),
-                      )
+                      save({
+                        ...p,
+                        classes: p.classes.filter((item) => item.id !== group.id),
+                        timetable: p.timetable.filter(
+                          (entry) => entry.classId !== group.id,
+                        ),
+                      })
                     }
                   >
                     Delete
@@ -1111,24 +1246,26 @@ function Classes({ p, update }: ProjectEditorProps) {
             </div>
             {(group.subjects ?? []).length === 0 ? (
               <small>
-                Add subjects for this class; existing timetable text remains
-                supported.
+                Add subjects for this class, then set each exam date and
+                session here.
               </small>
             ) : (
               <div className="subject-list">
+                <div className="subject-list-header" aria-hidden="true">
+                  <span>Subject</span>
+                  <span>Type</span>
+                  <span>Exam date</span>
+                  <span>Session</span>
+                  <span />
+                  <span />
+                  <span />
+                </div>
                 {(group.subjects ?? []).map((subject, index) => (
-                  <div key={subject.id}>
+                  <div className="subject-row" key={subject.id}>
                     <input
                       value={subject.name}
                       onChange={(event) =>
-                        changeSubjects(
-                          group.id,
-                          (group.subjects ?? []).map((item) =>
-                            item.id === subject.id
-                              ? { ...item, name: event.target.value }
-                              : item,
-                          ),
-                        )
+                        renameSubject(group.id, subject, event.target.value)
                       }
                     />
                     <em>
@@ -1136,6 +1273,38 @@ function Classes({ p, update }: ProjectEditorProps) {
                         ? "Second Language"
                         : "Normal"}
                     </em>
+                    <input
+                      aria-label={`Exam date for ${subject.name}`}
+                      type="date"
+                      min={p.exam.startDate || undefined}
+                      max={p.exam.endDate || undefined}
+                      value={entryForSubject(group.id, subject)?.date ?? ""}
+                      onChange={(event) =>
+                        scheduleSubject(group.id, subject, {
+                          date: event.target.value,
+                        })
+                      }
+                    />
+                    <select
+                      aria-label={`Exam session for ${subject.name}`}
+                      disabled={!entryForSubject(group.id, subject)?.date}
+                      value={
+                        entryForSubject(group.id, subject)?.session ??
+                        p.exam.sessions[0] ??
+                        ""
+                      }
+                      onChange={(event) =>
+                        scheduleSubject(group.id, subject, {
+                          session: event.target.value,
+                        })
+                      }
+                    >
+                      {p.exam.sessions.map((session) => (
+                        <option key={session} value={session}>
+                          {session}
+                        </option>
+                      ))}
+                    </select>
                     <button
                       disabled={index === 0}
                       onClick={() => {
@@ -1164,14 +1333,7 @@ function Classes({ p, update }: ProjectEditorProps) {
                     </button>
                     <button
                       className="danger"
-                      onClick={() =>
-                        changeSubjects(
-                          group.id,
-                          (group.subjects ?? []).filter(
-                            (item) => item.id !== subject.id,
-                          ),
-                        )
-                      }
+                      onClick={() => deleteSubject(group.id, subject)}
                     >
                       Delete
                     </button>
