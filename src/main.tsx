@@ -422,7 +422,7 @@ function App() {
   const nav: [View, string, React.ElementType][] = [
     ["dashboard", "Dashboard", Home],
     ["setup", "Exam setup", Settings],
-    ["classes", "Classes & Subjects", Users],
+    ["classes", "Classes, Subjects & Exam Dates", Users],
     ["rooms", "Rooms", MapPin],
     ["teachers", "Teachers Duty Allotment", GraduationCap],
     ["seating", "Seating", BookOpen],
@@ -1112,7 +1112,7 @@ function Classes({
   return (
     <section className="panel">
       <div className="row">
-        <h2>Classes & Subjects</h2>
+        <h2>Classes, Subjects & Exam Dates</h2>
         <Button onClick={add}>
           <Plus />
           Add class
@@ -1197,7 +1197,7 @@ function Classes({
       </div>
       <section className="class-subjects">
         <div>
-          <h2>Subjects by class</h2>
+          <h2>Subjects & exam dates by class</h2>
           <p className="muted">
             Subjects belong to a class. Second Language is explicitly marked and
             does not behave like a normal subject.
@@ -1253,9 +1253,9 @@ function Classes({
               <div className="subject-list">
                 <div className="subject-list-header" aria-hidden="true">
                   <span>Subject</span>
-                  <span>Type</span>
                   <span>Exam date</span>
                   <span>Session</span>
+                  <span>Type</span>
                   <span />
                   <span />
                   <span />
@@ -1268,11 +1268,6 @@ function Classes({
                         renameSubject(group.id, subject, event.target.value)
                       }
                     />
-                    <em>
-                      {subject.type === "second-language"
-                        ? "Second Language"
-                        : "Normal"}
-                    </em>
                     <input
                       aria-label={`Exam date for ${subject.name}`}
                       type="date"
@@ -1305,6 +1300,11 @@ function Classes({
                         </option>
                       ))}
                     </select>
+                    <em>
+                      {subject.type === "second-language"
+                        ? "Second Language"
+                        : "Normal"}
+                    </em>
                     <button
                       disabled={index === 0}
                       onClick={() => {
